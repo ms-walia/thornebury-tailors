@@ -590,6 +590,7 @@ export default class App extends React.Component {
           <div style={{ maxWidth: 1240, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 14, justifyContent: 'space-between' }}>
             <span style={{ letterSpacing: '0.22em', textTransform: 'uppercase' }}>Thornebury &amp; Sons</span>
             <span>Bespoke tailoring · London · Est. 1948</span>
+            <span style={{ width: '100%', fontSize: 11, color: '#5d6672' }}>3D mannequin based on <a href="https://sketchfab.com/3d-models/stichless-mannequin-7de2b540a6014077b7a2206d8c25ca12" target="_blank" rel="noreferrer" style={{ color: '#8e97a3', textDecoration: 'underline' }}>“Stichless Mannequin” by arvelmay</a>, CC BY 4.0, modified.</span>
           </div>
         </footer>
       </div>

@@ -98,6 +98,11 @@ class SuitViewer extends HTMLElement {
       }));
     };
     A.drape = env(A.hullTorso);
+    // tailored cloth bridges the chest: wide angular smoothing so a coat front hangs flat, not over each pec
+    A.drapeCoat = A.drape.map(row => row.map((r0, j) => {
+      let s = 0, w = 0; for (let k = -7; k <= 7; k++) { const ww = Math.exp(-k * k / 18); s += row[(j + k + A.na) % A.na] * ww; w += ww; }
+      return Math.max(s / w, r0 * 0.985);
+    }));
     let src = null;
     gltf.scene.traverse(o => { if (o.isMesh && !src) src = o.geometry; });
     this._basePos = src.getAttribute('position').array.slice();
@@ -253,7 +258,10 @@ class SuitViewer extends HTMLElement {
     const waist = clamp(c.waistM || 0.84 * Math.pow(g, 1.8) * Math.sqrt(hs), 0.56, 1.65);
     const hip = clamp(c.hipM || 0.99 * Math.pow(g, 1.15) * Math.sqrt(hs), 0.7, 1.7);
     const shoulder = clamp(c.shoulderM || 0.46 * Math.sqrt(hs) * Math.pow(g, 0.3), 0.36, 0.62);
-    const fC = clamp(chest / chestB, 0.72, 1.7), fW = clamp(waist / waistB, 0.68, 1.9), fH = clamp(hip / hipB, 0.72, 1.7);
+    const fC = clamp(chest / chestB, 0.72, 1.7), fW0 = clamp(waist / waistB, 0.68, 2.1), fH = clamp(hip / hipB, 0.72, 1.7);
+    // waist beyond the chest/hip line grows forward as a belly instead of widening evenly
+    const fW = Math.min(fW0, Math.max(fC, fH) * 1.02);
+    const bellyK = clamp((fW0 / fW - 1) / 0.42, 0, 1.0);
     const shBase = 2 * (A.shoulder[0] + 0.02) * u;
     const fS = clamp(shoulder / shBase, 0.8, 1.35);
     const neckF = 1 + (fC - 1) * 0.35;
@@ -269,7 +277,9 @@ class SuitViewer extends HTMLElement {
     const kA = u * Math.pow(g, 0.55), kLg = u * Math.pow(g, 0.6) * Math.sqrt(fH);
     const dxA = A.shoulder[0] * (u * fS - 1);
     const dxL = 0.095 * (u * fH - 1);
-    const fr = { A, H, g, hs, u, fx, fz, Y, kA, kLg, dxA, dxL, crotchT, kL };
+    const bellyY = A.waistY - 0.01;
+    const belly = (yb, c) => c <= 0 || bellyK <= 0 ? 1 : 1 + bellyK * Math.exp(-Math.pow((yb - bellyY) / (yb < bellyY ? 0.14 : 0.17), 2)) * Math.pow(c, 1.25);
+    const fr = { A, H, g, hs, u, fx, fz, Y, kA, kLg, dxA, dxL, crotchT, kL, belly, bellyK };
     // deformed limb chains
     const chainDef = (ch, isArm) => ch.map(p => {
       const s = Math.sign(p[0]) || 1;
@@ -299,7 +309,8 @@ class SuitViewer extends HTMLElement {
       const wt = Math.max(0, 1 - wa - wl);
       let ox = 0, oy = 0, oz = 0;
       if (wt > 0) {
-        const tx = x * fr.u * fr.fx(y), tz = z * fr.u * fr.fz(y), ty = fr.Y(y);
+        const rr = Math.hypot(x, z) || 1;
+        const tx = x * fr.u * fr.fx(y), tz = z * fr.u * fr.fz(y) * fr.belly(y, z / rr), ty = fr.Y(y);
         ox += wt * tx; oy += wt * ty; oz += wt * tz;
       }
       if (wa > 0) {
@@ -335,6 +346,17 @@ class SuitViewer extends HTMLElement {
     const body = add(this._deformMannequin(fr), new T.MeshPhysicalMaterial({ color: 0xece6db, roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.2, sheenColor: new T.Color(0xffffff) }));
 
     if (c.hideBody) body.visible = false;
+    // display stand (after the store mannequin): steel calf rod on a brushed disc
+    {
+      const steel = new T.MeshStandardMaterial({ color: 0xb8b9bb, metalness: 0.9, roughness: 0.32 });
+      const leg = fr.legs[1], k = Math.floor(leg.length * 0.72), p = leg[k].p;
+      const rod = add(new T.CylinderGeometry(0.009, 0.009, p.y, 20), steel);
+      rod.position.set(p.x, p.y / 2 - 0.02, p.z - leg[k].r - 0.006);
+      const cup = add(new T.CylinderGeometry(0.016, 0.016, 0.05, 20), steel);
+      cup.position.set(p.x, p.y - 0.02, p.z - leg[k].r - 0.004);
+      const disc = add(new T.CylinderGeometry(0.2, 0.21, 0.012, 64), steel);
+      disc.position.set(0, 0.006, 0);
+    }
     const pieces = OUTFITS[c.garment] || [];
     if (!pieces.length) return;
     const wear = (p) => pieces.includes(p);
@@ -383,13 +405,14 @@ class SuitViewer extends HTMLElement {
     };
     const S = (grid, yb, th, off) => {
       const R = hullR(grid, yb, th);
-      return [Math.sin(th) * (R * fr.u * fr.fx(yb) + off), fr.Y(yb), Math.cos(th) * (R * fr.u * fr.fz(yb) + off) + czAt(yb)];
+      const c = Math.cos(th);
+      return [Math.sin(th) * (R * fr.u * fr.fx(yb) + off), fr.Y(yb), c * (R * fr.u * fr.fz(yb) * fr.belly(yb, c) + off) + czAt(yb)];
     };
     const radAt = (grid, yb, th, off) => { const p = S(grid, yb, th, off); return Math.hypot(p[0], p[2] - czAt(yb)); };
     const GT = A.drape, G = GT;
 
     // generic shell: rows over yb in [y0(th), y1(th)], columns th in [a(yb), TAU - a(yb)] (+rot)
-    const gusset = (yb, th) => 0.045 * Math.exp(-Math.pow((yb - ap - 0.03) / 0.065, 2)) * Math.pow(Math.abs(Math.sin(th)), 2.5);
+    const gusset = (yb, th) => 0.032 * Math.exp(-Math.pow((yb - ap - 0.02) / 0.06, 2)) * Math.pow(Math.abs(Math.sin(th)), 10);
     const shellGeo = (o) => {
       const { grid, ny, nt } = o, rot = o.rot || 0;
       const y0f = typeof o.y0 === 'function' ? o.y0 : () => o.y0, y1f = typeof o.y1 === 'function' ? o.y1 : () => o.y1;
@@ -665,12 +688,13 @@ class SuitViewer extends HTMLElement {
 
     // =============== COAT ===============
     if (hasCoat) {
+      const G = A.drapeCoat;
       const eJ = { slim: 0.016, regular: 0.024, relaxed: 0.036 }[fit] || 0.024;
       const under = hasWc ? 0.016 : (hasShirt ? 0.008 : 0);
       const hemY = cr - 0.045, btnY = wy + 0.01, topY = nk - 0.018, open = c.openFront ? 1 : 0;
       const off = (yb, th) => {
         let o = eJ + under;
-        if (yb < wy) o += (wy - yb) * 0.11;               // skirt falls away from the seat
+        if (yb < wy) o += (wy - yb) * 0.05;               // skirt falls away from the seat
         if (yb > ap && yb < shY + 0.04) o += 0.006 * sstep(ap, shY, yb); // shoulder pad
         if (fit === 'slim') o -= 0.006 * Math.exp(-Math.pow((yb - wy) / 0.06, 2));
         return o;

@@ -19,4 +19,5 @@ Build: `npm run build` (output in `dist/`). Deploys to Vercel as a standard Vite
 
 ## Credits
 
-Base mesh: "3D Male Base Mesh" by BoQsc (https://github.com/BoQsc/Godot-Male-Base-Mesh), CC0 1.0.
+Mannequin body: "Stichless Mannequin" by arvelmay (https://sketchfab.com/3d-models/stichless-mannequin-7de2b540a6014077b7a2206d8c25ca12), licensed CC BY 4.0. Modified: re-posed to a relaxed stance, groin smoothed to a shop-mannequin finish, abdomen softened, rescaled; reshaped at runtime from customer measurements (incl. belly).
+Display stand styled after "Store Mannequin" by A-in Architecture (CC BY 4.0).
