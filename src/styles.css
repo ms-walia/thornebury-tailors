@@ -1,0 +1,30 @@
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #f6f3ee; color: #191b1e; font-family: Karla, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: #b06a3b; text-decoration: none; }
+a:hover { color: #14202f; }
+input::placeholder, textarea::placeholder { color: #a8a295; }
+input, textarea, button, select { font-family: inherit; }
+@keyframes riseIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+.serif { font-family: 'Cormorant Garamond', Georgia, serif; }
+.nav-link { color: #4a4a46; white-space: nowrap; }
+.nav-link:hover { color: #b06a3b; }
+.nav-cta { background: #14202f; color: #f6f3ee !important; padding: 10px 16px; letter-spacing: 0.12em; white-space: nowrap; }
+.nav-cta:hover { background: #b06a3b; }
+.hero-cta { background: #c2a074; color: #14202f !important; padding: 16px 30px; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; }
+.hero-cta:hover { background: #f6f3ee; }
+.hero-ghost { border: 1px solid #3a4655; color: #f0ece4 !important; padding: 16px 30px; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; }
+.hero-ghost:hover { border-color: #c2a074; color: #c2a074 !important; }
+.use-cloth { width: 100%; padding: 12px; background: transparent; border: 1px solid #14202f; color: #14202f; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; cursor: pointer; }
+.use-cloth:hover { background: #14202f; color: #f6f3ee; }
+.gold-btn { background: #c2a074; color: #14202f; border: none; padding: 16px; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600; cursor: pointer; }
+.gold-btn:hover { background: #f6f3ee; }
+.ghost-dark { justify-self: center; margin-top: 8px; background: transparent; border: 1px solid #3a4655; color: #f0ece4; padding: 12px 22px; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; cursor: pointer; }
+.ghost-dark:hover { border-color: #c2a074; color: #c2a074; }
+.card-btn:hover { border-color: #14202f !important; }
+.steps { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.dark-input { background: #14202f; border: 1px solid #2c3746; color: #f0ece4; padding: 13px 14px; font-size: 15px; outline: none; width: 100%; }
+.dark-input:focus { border-color: #c2a074; }
+.empty-hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); pointer-events: none; text-align: center; }
+@media (max-width: 639px) { .hide-narrow { display: none; } }
