@@ -20,4 +20,5 @@ Build: `npm run build` (output in `dist/`). Deploys to Vercel as a standard Vite
 ## Credits
 
 Mannequin body: "Stichless Mannequin" by arvelmay (https://sketchfab.com/3d-models/stichless-mannequin-7de2b540a6014077b7a2206d8c25ca12), licensed CC BY 4.0. Modified: re-posed to a relaxed stance, groin smoothed to a shop-mannequin finish, abdomen softened, rescaled; reshaped at runtime from customer measurements (incl. belly).
+Shirt: "Shirt" by eigenscene (https://sketchfab.com/eigenscene), licensed CC BY 4.0. Modified: refitted and re-posed onto the mannequin, recoloured with our cloths, reshaped at runtime.
 Display stand styled after "Store Mannequin" by A-in Architecture (CC BY 4.0).

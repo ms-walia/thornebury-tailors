@@ -25,7 +25,7 @@ const eyebrow = (color, mb) => ({ fontSize: 12, letterSpacing: '0.3em', textTran
 export default class App extends React.Component {
   state = {
     step: 1, garment: null, fabric: 'wool', color: 'W-104',
-    opts: { lapel: 'notch', collar: 'spread', cuff: 'barrel', button: 'horn', fit: 'regular', pockets: 'flap', lining: 'bemberg' },
+    opts: { lapel: 'notch', wcStyle: 'classic', collar: 'spread', cuff: 'barrel', button: 'horn', fit: 'regular', pockets: 'flap', lining: 'bemberg' },
     unit: null,
     m: { height: '', weight: '', neck: '', chest: '', waist: '', hip: '', shoulder: '', sleeve: '', inseam: '' },
     touched: false, placed: false, pickHint: false,
@@ -165,7 +165,7 @@ export default class App extends React.Component {
 
     const viewerConfig = JSON.stringify({
       garment: st.garment, fabric: fab.id, color: col.hex,
-      lapel: st.opts.lapel, collar: st.opts.collar, cuff: st.opts.cuff, button: st.opts.button, fit: st.opts.fit, pockets: st.opts.pockets, lining: st.opts.lining,
+      lapel: st.opts.lapel, wcStyle: st.opts.wcStyle, collar: st.opts.collar, cuff: st.opts.cuff, button: st.opts.button, fit: st.opts.fit, pockets: st.opts.pockets, lining: st.opts.lining,
       heightM: hM, weightKg: wK, chestM: this.si('chest'), waistM: this.si('waist'), hipM: this.si('hip'),
       shoulderM: this.si('shoulder'), sleeveM: this.si('sleeve'), inseamM: this.si('inseam'),
       openFront: hasShell && st.openFront, closeUp: st.closeUp, autoRotate: auto, viewYaw: st.viewYaw, viewNonce: st.viewNonce
@@ -590,7 +590,7 @@ export default class App extends React.Component {
           <div style={{ maxWidth: 1240, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 14, justifyContent: 'space-between' }}>
             <span style={{ letterSpacing: '0.22em', textTransform: 'uppercase' }}>Thornebury &amp; Sons</span>
             <span>Bespoke tailoring · London · Est. 1948</span>
-            <span style={{ width: '100%', fontSize: 11, color: '#5d6672' }}>3D mannequin based on <a href="https://sketchfab.com/3d-models/stichless-mannequin-7de2b540a6014077b7a2206d8c25ca12" target="_blank" rel="noreferrer" style={{ color: '#8e97a3', textDecoration: 'underline' }}>“Stichless Mannequin” by arvelmay</a>, CC BY 4.0, modified.</span>
+            <span style={{ width: '100%', fontSize: 11, color: '#5d6672' }}>3D mannequin based on <a href="https://sketchfab.com/3d-models/stichless-mannequin-7de2b540a6014077b7a2206d8c25ca12" target="_blank" rel="noreferrer" style={{ color: '#8e97a3', textDecoration: 'underline' }}>“Stichless Mannequin” by arvelmay</a> and shirt from <a href="https://sketchfab.com/eigenscene" target="_blank" rel="noreferrer" style={{ color: '#8e97a3', textDecoration: 'underline' }}>“Shirt” by eigenscene</a>, both CC BY 4.0, modified.</span>
           </div>
         </footer>
       </div>

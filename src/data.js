@@ -43,6 +43,8 @@ export const GROUPS = [
     options: [{ id: 'horn', name: 'Buffalo horn', add: 0 }, { id: 'corozo', name: 'Corozo nut', add: 24 }, { id: 'pearl', name: 'Mother-of-pearl', add: 48 }] },
   { key: 'fit', label: 'Fit', note: 'Ease drafted into the pattern', applies: ALL,
     options: [{ id: 'slim', name: 'Slim', add: 0 }, { id: 'regular', name: 'Regular', add: 0 }, { id: 'relaxed', name: 'Relaxed', add: 0 }] },
+  { key: 'wcStyle', label: 'Waistcoat style', note: 'How the fronts close', applies: ['waistcoat', 'three'],
+    options: [{ id: 'classic', name: 'Four-button', add: 0 }, { id: 'two', name: 'Two-button, deep V', add: 0 }, { id: 'double', name: 'Double-breasted', add: 45 }, { id: 'wrap', name: 'Asymmetric wrap', add: 60 }] },
   { key: 'pockets', label: 'Pockets', note: 'Hand-set', applies: ['coat', 'suit', 'three', 'pants', 'waistcoat'],
     options: [{ id: 'flap', name: 'Flap', add: 0 }, { id: 'jetted', name: 'Jetted', add: 32 }, { id: 'patch', name: 'Patch', add: 18 }, { id: 'ticket', name: 'Flap + ticket', add: 46 }] },
   { key: 'lining', label: 'Lining', note: 'Use “Show lining” on the dummy', applies: ['coat', 'suit', 'three', 'waistcoat'],
