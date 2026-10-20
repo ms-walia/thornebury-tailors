@@ -527,9 +527,9 @@ class SuitViewer extends HTMLElement {
     };
     const sleeveCap = (path, mat) => {
       const p0 = path[0].p, dir = new T.Vector3().subVectors(p0, path[3].p).normalize();
-      const cap = add(new T.SphereGeometry(path[0].r, 32, 14, 0, TAU, 0, Math.PI / 2), mat);
+      const cap = add(new T.SphereGeometry(path[0].r * 0.97, 32, 14, 0, TAU, 0, Math.PI / 2), mat);
       cap.position.copy(p0); cap.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), dir);
-      cap.scale.set(1, 0.55, 1);
+      cap.scale.set(0.94, 0.42, 0.94);
       return cap;
     };
     const tAtY = (ch, yb) => {
@@ -551,87 +551,267 @@ class SuitViewer extends HTMLElement {
 
     const cr = A.crotchY, wy = A.waistY, ch = A.chestY, ap = A.armpitY, nk = A.neckY, shY = A.shoulder[1];
     const hasCoat = wear('coat'), hasWc = wear('waistcoat'), hasPants = wear('pants'), hasShirt = wear('shirt');
+    const D = A.drape, DC = A.drapeCoat;
+    const nkC = nk + 0.014;                                   // visual base of the neck (collar line)
+    const neckR = (th) => radAt(A.hullTorso, nkC + 0.016, th, 0);
 
-    // =============== SHIRT ===============
+    // ---------- layer stack: each garment sits just outside the one beneath it ----------
+    const fitE = { slim: 0, regular: 0.004, relaxed: 0.009 }[fit] ?? 0.004;
+    const L = {};
+    L.shirt = 0.0035 + fitE * 0.6;
+    L.pants = (hasShirt ? L.shirt + 0.0055 : 0.004) + fitE;
+    L.wc = Math.max(hasShirt ? L.shirt : 0, hasPants ? L.pants : 0) + 0.006 + fitE * 0.5;
+    L.coat = (hasWc ? L.wc + 0.008 : Math.max(hasPants ? L.pants : 0, hasShirt ? L.shirt : 0) + 0.01) + 0.008 + fitE;
+
+    const V3 = (a) => new T.Vector3(a[0], a[1], a[2]);
+    const outward = (p, n) => { if (n.x * p.x + n.z * p.z < 0) n.negate(); return n; };
+
+    // ---------- 3D slab: a piece of cloth with real thickness, edges and shadows ----------
+    // P(u, v) -> Vector3 on the underside; the top sits `th` along the outward normal.
+    // roundU0: the u = 0 edge is a rolled fold (half-round) instead of a cut edge.
+    const slabGeo = (nu, nv, P, th, opts) => {
+      opts = opts || {};
+      const base = [], top = [];
+      const at = (i, j) => base[i * (nu + 1) + j];
+      for (let i = 0; i <= nv; i++) for (let j = 0; j <= nu; j++) base.push(P(j / nu, i / nv));
+      for (let i = 0; i <= nv; i++) for (let j = 0; j <= nu; j++) {
+        const p = at(i, j);
+        const pu = at(i, Math.min(nu, j + 1)).clone().sub(at(i, Math.max(0, j - 1)));
+        const pv = at(Math.min(nv, i + 1), j).clone().sub(at(Math.max(0, i - 1), j));
+        const n = outward(p, pu.cross(pv).normalize());
+        const t = typeof th === 'function' ? th(j / nu, i / nv) : th;
+        top.push(p.clone().addScaledVector(n, t));
+      }
+      const pos = [], idx = [];
+      const quad = (a, b, c, d) => { const k = pos.length / 3; [a, b, c, d].forEach(q => pos.push(q.x, q.y, q.z)); idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); };
+      const grid = (arr, flip) => {
+        const k0 = pos.length / 3;
+        arr.forEach(q => pos.push(q.x, q.y, q.z));
+        for (let i = 0; i < nv; i++) for (let j = 0; j < nu; j++) {
+          const a = k0 + i * (nu + 1) + j, b = a + 1, c = a + nu + 1, d = c + 1;
+          if (flip) idx.push(a, c, b, b, c, d); else idx.push(a, b, c, b, d, c);
+        }
+      };
+      grid(top, false); grid(base, true);
+      const T_ = (i, j) => top[i * (nu + 1) + j], B_ = (i, j) => base[i * (nu + 1) + j];
+      // side walls: v = 0, v = 1, u = 1 (cut edges)
+      for (let j = 0; j < nu; j++) { quad(B_(0, j), B_(0, j + 1), T_(0, j), T_(0, j + 1)); quad(T_(nv, j), T_(nv, j + 1), B_(nv, j), B_(nv, j + 1)); }
+      for (let i = 0; i < nv; i++) quad(B_(i, nu), B_(i + 1, nu), T_(i, nu), T_(i + 1, nu));
+      // u = 0 edge: flat cut, or a rolled half-round fold
+      if (!opts.roundU0) for (let i = 0; i < nv; i++) quad(T_(i, 0), T_(i + 1, 0), B_(i, 0), B_(i + 1, 0));
+      else {
+        const K = 6;
+        for (let i = 0; i < nv; i++) {
+          const ring = (ii) => {
+            const b = B_(ii, 0), t = T_(ii, 0), m = b.clone().add(t).multiplyScalar(0.5), r = t.distanceTo(b) / 2;
+            const tang = B_(ii, 0).clone().sub(B_(ii, Math.min(1, nu))).normalize();
+            const up = t.clone().sub(b).normalize();
+            const out = [];
+            for (let k = 0; k <= K; k++) { const a = Math.PI * k / K; out.push(m.clone().addScaledVector(up, -Math.cos(a) * r).addScaledVector(tang, Math.sin(a) * r * 1.1)); }
+            return out;
+          };
+          const r0 = ring(i), r1 = ring(i + 1);
+          for (let k = 0; k < K; k++) quad(r0[k + 1], r1[k + 1], r0[k], r1[k]);
+        }
+      }
+      const geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+      const uv = []; for (let k = 0; k < pos.length; k += 3) uv.push(pos[k] * 1.6 + pos[k + 2] * 1.6, pos[k + 1] * 1.6);
+      geo.setAttribute('uv', new T.Float32BufferAttribute(uv, 2));
+      geo.setIndex(idx); geo.computeVertexNormals();
+      return geo;
+    };
+    // slab lying on a body surface: rectangle centred at angle thc, width w (m), from y0 to y1 (base heights)
+    const slabOn = (grid, y0, y1, thc, w, off, th, mat, o) => {
+      o = o || {};
+      return add(slabGeo(o.nu || 8, o.nv || Math.max(2, Math.ceil(Math.abs(y1 - y0) / 0.012)), (u, v) => {
+        const yb = lerp(y0, y1, v), R = radAt(grid, yb, thc, off);
+        const shear = (o.slant || 0) * (v - 0.5);
+        return V3(S(grid, yb, thc + ((u - 0.5) * w + shear) / R, off));
+      }, th, o), mat);
+    };
+    // panel shell between two angle edges th0(yb)..th1(yb) (columns) and y0(th)..y1(th) (rows)
+    const panelGeo = (o) => {
+      const { grid, ny, nt } = o;
+      const y0f = typeof o.y0 === 'function' ? o.y0 : () => o.y0, y1f = typeof o.y1 === 'function' ? o.y1 : () => o.y1;
+      const off = typeof o.off === 'function' ? o.off : () => o.off;
+      const pos = [], uv = [], idx = [];
+      for (let i = 0; i <= ny; i++) {
+        const v = i / ny;
+        for (let j = 0; j <= nt; j++) {
+          const u = j / nt;
+          let th = lerp(o.th0(lerp(y0f(0), y1f(0), v)), o.th1(lerp(y0f(0), y1f(0), v)), u);
+          let yb = lerp(y0f(th), y1f(th), v);
+          th = lerp(o.th0(yb), o.th1(yb), u);
+          yb = lerp(y0f(th), y1f(th), v);
+          const p = S(grid, yb, th, off(yb, th));
+          pos.push(p[0], p[1], p[2]); uv.push(th * 0.16, p[1]);
+        }
+      }
+      for (let i = 0; i < ny; i++) for (let j = 0; j < nt; j++) {
+        const a = i * (nt + 1) + j, b = a + 1, cc = a + nt + 1, d = cc + 1;
+        idx.push(a, b, cc, b, d, cc);
+      }
+      const geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('uv', new T.Float32BufferAttribute(uv, 2));
+      geo.setIndex(idx); geo.computeVertexNormals();
+      return geo;
+    };
+    // cut-edge wall along a panel's front edge, so an overlapping front reads as a separate layer
+    const edgeWall = (grid, ys, thf, offTop, depth, mat) => {
+      const pos = [], idx = [];
+      ys.forEach(yb => { const th = thf(yb); const a = S(grid, yb, th, offTop(yb, th)), b = S(grid, yb, th, offTop(yb, th) - depth); pos.push(...a, ...b); });
+      for (let i = 0; i < ys.length - 1; i++) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+      const geo = new T.BufferGeometry(); geo.setAttribute('position', new T.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      return add(geo, mat);
+    };
+    const btn3d = (r, mat) => {
+      const g = new T.Group();
+      const body = new T.Mesh(new T.CylinderGeometry(r, r * 0.94, 0.0042, 28), mat); body.castShadow = true; g.add(body);
+      const rim = new T.Mesh(new T.TorusGeometry(r * 0.86, r * 0.13, 8, 28), mat); rim.rotation.x = Math.PI / 2; rim.position.y = 0.0022; g.add(rim);
+      const hm = new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+      [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([a, b]) => { const h = new T.Mesh(new T.CylinderGeometry(r * 0.1, r * 0.1, 0.0046, 8), hm); h.position.set(a * r * 0.24, 0.0003, b * r * 0.24); g.add(h); });
+      return g;
+    };
+    const putBtn = (r, mat, grid, yb, th, off) => { const b = btn3d(r, mat); placeOn(b, grid, yb, th, off + 0.0022); M.add(b); return b; };
+    // tube with wall thickness and end rings (cuffs, waistband-like bands on limbs)
+    const ringSlab = (path, thick, mat) => {
+      add(tubeGeo(path, 36), mat);
+      add(tubeGeo(path.map(q => ({ p: q.p, r: q.r - thick })), 36), mat);
+      [0, path.length - 1].forEach(k => {
+        const q = path[k], d = path[Math.min(path.length - 1, k + 1)].p.clone().sub(path[Math.max(0, k - 1)].p).normalize();
+        const ring = new T.Mesh(new T.RingGeometry(q.r - thick, q.r, 36), mat);
+        ring.position.copy(q.p); ring.quaternion.setFromUnitVectors(new T.Vector3(0, 0, 1), d); M.add(ring);
+      });
+    };
+    const shirtBtnMat = () => new T.MeshPhysicalMaterial({ color: 0xf4f1ea, roughness: 0.18, clearcoat: 0.6 });
+    const welt = (grid, yb, thc, w, off, mat, h) => {
+      slabOn(grid, yb - 0.0035, yb + 0.0035, thc, w + 0.004, off + 0.0004, 0.0012, darkMat());            // the opening
+      slabOn(grid, yb - (h || 0.009), yb - 0.0032, thc, w, off, 0.0028, mat);                                // lower welt lip
+      slabOn(grid, yb + 0.0032, yb + 0.0065, thc, w, off, 0.0022, mat);                                       // upper jet
+    };
+    const flap = (grid, yb, thc, w, h, off, mat) => {
+      slabOn(grid, yb - 0.0025, yb + 0.0025, thc, w + 0.004, off + 0.0004, 0.0012, darkMat());
+      slabOn(grid, yb - h, yb + 0.002, thc, w, off + 0.0012, (u, v) => 0.0026 + 0.0018 * v, mat);           // flap, thicker at the seam
+    };
+    const patchPocket = (grid, yb, thc, w, h, off, mat) => slabOn(grid, yb - h, yb, thc, w, off, 0.0022, mat);
+
+    // ---------- shared sleeve radii (shirt inside, coat outside) ----------
+    const shirtSleeve = (chn) => {
+      const wt = wristT(chn);
+      const ease = 0.008 + fitE * 1.2;
+      return { wt, path: chainPath(chn, 0.025, wt + 0.004, 32, (t, r) => Math.min(0.056 * fr.kA + ease, Math.max(r + ease, lerp(0.058 * fr.kA, 0.04 * fr.kA, t)))) };
+    };
+
+    // =============== SHIRT (full garment) ===============
     if (hasShirt) {
-      const sOff = { slim: 0.004, regular: 0.007, relaxed: 0.012 }[fit] || 0.006;
       const tucked = hasPants;
-      const hemY = tucked ? wy - 0.1 : cr + 0.015;
-      const y0 = tucked ? () => hemY : (th) => hemY - 0.035 * Math.pow(Math.abs(Math.cos(th)), 2);
-      const sTop = nk - 0.012;
-      const off = (yb) => sOff * sstep(sTop, sTop - 0.06, yb) + 0.002;
-      add(shellGeo({ grid: GT, y0, y1: sTop, ny: 60, nt: 72, off, gusset: true }), shirtMat());
-      // placket + buttons
-      patch(G, hemY + 0.02, nk - 0.01, 0, 0.032, off(ch) + 0.0012, shirtMat(0.97));
+      const hemY = tucked ? wy - 0.11 : cr + 0.01;
+      const y0 = tucked ? () => hemY : (th) => hemY - 0.04 * Math.pow(Math.abs(Math.cos(th)), 2) + 0.012 * Math.pow(Math.abs(Math.sin(th)), 4);
+      const sTop = nkC;
+      const off = (yb, th) => L.shirt * sstep(sTop + 0.01, sTop - 0.05, yb) + 0.0025 + 0.032 * Math.exp(-Math.pow((yb - ap - 0.05) / 0.07, 2)) * Math.pow(Math.abs(Math.sin(th || 0)), 3);
+      add(shellGeo({ grid: D, y0, y1: sTop, ny: 70, nt: 84, off }), shirtMat());
+      // front placket: a real doubled strip of cloth, buttoned
+      const plTop = nkC - 0.016;
+      slabOn(D, hemY + (tucked ? 0.0 : 0.004), plTop, 0, 0.032, off(ch, 0), 0.0022, shirtMat(0.985), { nu: 4 });
       const nb = 7;
       for (let k = 0; k < nb; k++) {
-        const yb = lerp(nk - 0.06, Math.max(hemY + 0.06, wy - 0.06), k / (nb - 1));
-        const b = button(0.0052, new T.MeshPhysicalMaterial({ color: 0xf2efe8, roughness: 0.2, clearcoat: 0.5 }));
-        placeOn(b, G, yb, 0, off(yb) + 0.002); b.castShadow = true; M.add(b);
+        const yb = lerp(plTop - 0.035, Math.max(hemY + 0.07, wy - 0.07), k / (nb - 1));
+        putBtn(0.0052, shirtBtnMat(), D, yb, 0, off(yb, 0) + 0.0022);
       }
-      // collar: stand + turned-down leaves
+      // collar band: hugs the neck, closed at the front
+      const bandOff = 0.0032;
+      const bandTop = nkC + 0.026, bandBot = nkC - 0.014;
+      add(slabGeo(48, 4, (u, v) => {
+        const th = lerp(0.07, TAU - 0.07, u), yb = lerp(bandBot, bandTop, v);
+        return V3(S(D, yb, th, neckR(th) + bandOff - radAt(D, yb, th, 0)));
+      }, 0.0024), shirtMat(1.0));
+      putBtn(0.0042, shirtBtnMat(), D, nkC + 0.004, 0.09, neckR(0.09) + bandOff + 0.0024 - radAt(D, nkC + 0.004, 0.09, 0));
+      // pointed collar leaves: fold at the top of the band, points lying on the chest
       const cst = c.collar || 'spread';
-      const standOff = 0.008;
-      add(shellGeo({ grid: GT, y0: nk - 0.006, y1: nk + 0.016, ny: 3, nt: 48, a: () => 0.12, off: standOff }), shirtMat());
-      const spread = { spread: 0.55, button: 0.36, cutaway: 0.85 }[cst] ?? 0.55;
-      add(shellGeo({
-        grid: GT, ny: 6, nt: 56,
-        y0: (th) => nk - 0.012 - 0.066 * Math.pow(Math.abs(Math.cos(th / 2)), 6),
-        y1: nk + 0.018,
-        a: (yb) => lerp(spread, 0.1, sstep(nk - 0.08, nk + 0.012, yb)),
-        off: (yb, th) => {
-          const base = radAt(GT, yb, th, 0);
-          const neckR = radAt(GT, nk + 0.004, th, 0) + standOff + 0.004 + 0.016 * sstep(nk + 0.012, nk - 0.06, yb);
-          const lie = Math.max(radAt(GT, yb, th, off(yb)), yb > nk - 0.008 ? radAt(GT, yb, th, standOff) : 0) + 0.004;
-          return Math.max(neckR, lie) - base;
-        }
-      }), shirtMat(0.95));
-      if (cst === 'button') [-1, 1].forEach(s => {
-        const b = button(0.0035, new T.MeshPhysicalMaterial({ color: 0xf2efe8, roughness: 0.2 }));
-        placeOn(b, GT, nk - 0.07, s * 0.62, standOff + 0.026); M.add(b);
-      });
-      // sleeves
-      const cuffFrench = (c.cuff || 'barrel') === 'french';
+      const thPt = { spread: 0.48, button: 0.34, cutaway: 0.72 }[cst] ?? 0.48;
+      const thF = 0.1, foldY = bandTop + 0.004, ptY = nk - 0.062;
+      add(slabGeo(64, 8, (u, v) => {
+        // u: 0 = left front edge -> back -> 1 = right front edge
+        const side = u < 0.5 ? 1 : -1, uu = u < 0.5 ? u * 2 : (1 - u) * 2;      // 0 at front edge, 1 at centre back
+        const phiTop = lerp(thF, Math.PI, uu);
+        const phiBot = lerp(thPt, Math.PI, uu);
+        const phi = lerp(phiTop, phiBot, v);
+        const yBot = lerp(ptY, nkC + 0.004, sstep(0, 0.15, uu));
+        const yb = lerp(foldY, yBot, v);
+        const neckLay = neckR(phi) + bandOff + 0.0024 + 0.0014 + 0.004 * v;
+        const lie = (radAt(D, yb, phi, off(yb, phi)) + 0.0014) * (phi < 0.95 ? 1 : 0);
+        const r = Math.max(neckLay, lie);
+        return V3(S(D, yb, side * phi, r - radAt(D, yb, side * phi, 0)));
+      }, 0.0022, {}), shirtMat(1.0));
+      if (cst === 'button') [-1, 1].forEach(s => putBtn(0.0033, shirtBtnMat(), D, ptY + 0.012, s * (thPt - 0.03), off(ptY, thPt) + 0.0052));
+      // sleeves + cuffs joined to them
+      const french = (c.cuff || 'barrel') === 'french';
       fr.arms.forEach((chn, si) => {
-        const wt = wristT(chn);
-        const ease = { slim: 0.01, regular: 0.014, relaxed: 0.02 }[fit] || 0.014;
-        if (!hasCoat) {
-          const path = chainPath(chn, 0.035, wt + 0.01, 30, (t, r) => Math.min(0.056 * fr.kA + ease, Math.max(r + ease, lerp(0.06 * fr.kA, 0.043 * fr.kA, t))));
-          add(tubeGeo(path, 36), shirtMat());
-          sleeveCap(path, shirtMat());
-        }
-        const cuff = chainPath(chn, wt - (hasCoat ? 0.0 : 0.04), wt + (cuffFrench ? 0.03 : 0.022), 4, () => (cuffFrench ? 0.044 : 0.041) * fr.kA);
-        add(tubeGeo(cuff, 32), shirtMat(1.02));
-        const endP = cuff[cuff.length - 1].p, endD = new T.Vector3().subVectors(endP, cuff[0].p).normalize();
-        if (cuffFrench) {
-          const link = add(new T.SphereGeometry(0.0055, 16, 12), new T.MeshStandardMaterial({ color: 0xc9a25e, metalness: 0.9, roughness: 0.25 }));
-          link.position.copy(endP).addScaledVector(endD, -0.012).add(new T.Vector3(si ? 0.02 : -0.02, 0, 0.034));
+        const { wt, path } = shirtSleeve(chn);
+        add(tubeGeo(path, 36), shirtMat());
+        sleeveCap(path, shirtMat());
+        const wr = chainPath(chn, wt - 0.002, wt + 0.002, 1, (t, r) => r)[0].r;
+        const cuffR = wr + (french ? 0.012 : 0.0095);
+        const cuff = chainPath(chn, wt - 0.05, wt + (french ? 0.03 : 0.02), 6, () => cuffR).map(q => ({ p: q.p, r: cuffR }));
+        ringSlab(cuff, 0.0026, shirtMat(1.0));
+        const endP = cuff[cuff.length - 1].p, endD = endP.clone().sub(cuff[0].p).normalize();
+        const o = new T.Vector3(si ? -0.55 : 0.55, 0, 0.83).normalize();
+        if (french) {
+          const gold = new T.MeshStandardMaterial({ color: 0xc9a25e, metalness: 0.9, roughness: 0.25 });
+          const link = add(new T.CylinderGeometry(0.0055, 0.0055, 0.003, 20), gold);
+          link.position.copy(endP).addScaledVector(endD, -0.02).addScaledVector(o, cuffR + 0.002);
+          link.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), o);
         } else {
-          const b = button(0.0042, new T.MeshPhysicalMaterial({ color: 0xf2efe8, roughness: 0.2 }));
-          const o = new T.Vector3(si ? -0.6 : 0.6, 0, 0.8).normalize();
-          b.position.copy(endP).addScaledVector(endD, -0.012).addScaledVector(o, 0.043 * fr.kA);
+          const b = btn3d(0.0042, shirtBtnMat());
+          b.position.copy(endP).addScaledVector(endD, -0.018).addScaledVector(o, cuffR + 0.0015);
           b.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), o); M.add(b);
         }
       });
     }
 
-    // =============== TROUSERS ===============
+    // =============== TROUSERS (full garment) ===============
     if (hasPants) {
-      const tOff = { slim: 0.01, regular: 0.016, relaxed: 0.024 }[fit] || 0.016;
-      const GT = A.hullTorso;
-      const top = wy - 0.015;
-      const pMat = fabMat(1, T.DoubleSide);
-      add(shellGeo({ grid: GT, y0: cr - 0.05, y1: top, ny: 30, nt: 72, rot: Math.PI, off: (yb) => tOff + 0.006 * sstep(cr + 0.05, cr - 0.05, yb) }), pMat);
-      add(shellGeo({ grid: GT, y0: top - 0.035, y1: top + 0.002, ny: 2, nt: 72, rot: Math.PI, off: tOff + 0.003 }), fabMat(0.88));
-      // fly + belt loops
-      patch(GT, cr + 0.03, top - 0.035, 0.05, 0.004, tOff + 0.0035, darkMat());
-      [-1.25, -0.45, 0.45, 1.25, Math.PI].forEach(th => patch(GT, top - 0.04, top + 0.004, th, 0.01, tOff + 0.005, fabMat(0.9, T.DoubleSide)));
-      const btn = button(0.0068, btnMat()); placeOn(btn, GT, top - 0.018, 0.0, tOff + 0.005); M.add(btn);
+      const tOff = L.pants;
+      const top = wy - 0.004;
+      add(shellGeo({ grid: D, y0: cr - 0.03, y1: top, ny: 30, nt: 80, rot: Math.PI, off: (yb) => tOff - 0.003 * sstep(cr + 0.04, cr - 0.02, yb) }), fabMat(1, T.DoubleSide));
+      // waistband: a real band of cloth with its own thickness
+      const wbH = 0.038;
+      add(slabGeo(96, 3, (u, v) => V3(S(D, lerp(top - wbH, top, v), lerp(0, TAU, u) + 0.15, tOff + 0.0006)), 0.0032, {}), fabMat(0.95));
+      // extension tab + button at the front
+      slabOn(D, top - wbH, top, 0.09, 0.05, tOff + 0.0035, 0.0025, fabMat(0.97), { nu: 4 });
+      putBtn(0.0068, btnMat(), D, top - wbH / 2, 0.075, tOff + 0.006);
+      // belt loops
+      [-1.3, -0.55, 0.55, 1.3, Math.PI - 0.45, Math.PI + 0.45, Math.PI].forEach(th => slabOn(D, top - wbH - 0.008, top + 0.004, th, 0.011, tOff + 0.0038, 0.0026, fabMat(0.97), { nu: 2 }));
+      // fly: a stitched fold of cloth on the wearer's left
+      slabOn(D, cr + 0.035, top - wbH, 0.11, 0.036, tOff + 0.0004, (u, v) => 0.0022 * (1 - 0.6 * u), fabMat(0.98), { nu: 4, roundU0: true });
+      // front pockets: slanted openings with a facing that lifts off the leg
+      [-1, 1].forEach(s => {
+        const y0p = top - wbH - 0.002, y1p = top - wbH - 0.16;
+        add(slabGeo(3, 16, (u, v) => {
+          const yb = lerp(y0p, y1p, v), th = s * lerp(0.62, 1.2, v) + s * u * 0.016 / radAt(D, yb, 0.9, tOff);
+          return V3(S(D, yb, th, tOff + 0.0004));
+        }, (u, v) => 0.0035 * (1 - u), { roundU0: true }), fabMat(0.96));
+        add(slabGeo(2, 16, (u, v) => {
+          const yb = lerp(y0p, y1p, v), th = s * lerp(0.62, 1.2, v) - s * (0.004 + u * 0.003) / radAt(D, yb, 0.9, tOff);
+          return V3(S(D, yb, th, tOff + 0.0002));
+        }, 0.0008), darkMat());
+      });
+      // back pockets: welts or flaps
+      const st = c.pockets || 'jetted';
+      [-1, 1].forEach(s => {
+        const yb = top - wbH - 0.045, thc = Math.PI + s * 0.48;
+        welt(D, yb, thc, 0.12, tOff, fabMat(0.96));
+        if (st === 'flap' || st === 'ticket') { flap(D, yb + 0.006, thc, 0.128, 0.05, tOff + 0.003, fabMat(0.98)); putBtn(0.0055, btnMat(), D, yb - 0.03, thc, tOff + 0.0075); }
+        else if (st === 'patch') patchPocket(D, yb + 0.01, thc, 0.13, 0.14, tOff + 0.0005, fabMat(0.98));
+      });
+      // legs
       const hemR = { slim: 0.06, regular: 0.068, relaxed: 0.078 }[fit] || 0.068;
       fr.legs.forEach((chn) => {
         const topP = chn[0].p, ank = chn[chn.length - 1].p;
-        const y0w = fr.Y(cr + 0.04), y1w = 0.035;
-        const n = 34, path = [];
+        const y0w = fr.Y(cr + 0.05), y1w = 0.035;
+        const n = 36, path = [];
         for (let k = 0; k <= n; k++) {
           const t = k / n, yw = lerp(y0w, y1w, t);
           const f = clamp((topP.y - yw) / (topP.y - ank.y), 0, 1.2);
@@ -641,145 +821,169 @@ class SuitViewer extends HTMLElement {
           const cc = chn[i].p.clone().lerp(chn[i + 1].p, ff);
           if (yw < fr.Y(cr - 0.1) && yw > ank.y) { const bl = sstep(fr.Y(cr - 0.1), fr.Y(cr - 0.2), yw); p.x = lerp(p.x, cc.x, 0.5 * bl); p.z = lerp(p.z, cc.z, 0.7 * bl); }
           const rr = Math.min(lerp(chn[i].r, chn[i + 1].r, ff), 0.088 * fr.kLg) * 1.04 + 0.004;
-          const rTop = Math.min(chn[2].r, 0.086 * fr.kLg) + tOff;
-          path.push({ p, r: Math.max(rr + tOff * 0.8, lerp(rTop, hemR * fr.kLg / fr.u, Math.pow(t, 0.85))) });
+          const rTop = Math.max(Math.min(chn[2].r, 0.086 * fr.kLg) + tOff + 0.004, radAt(D, cr + 0.06, Math.PI / 2, tOff) * 0.5 + 0.004);
+          const q = { p, r: Math.max(rr + tOff * 0.8, lerp(rTop, hemR * fr.kLg / fr.u, Math.pow(t, 0.85))) };
+          // near the crotch the leg fills its half of the seat, so seat and leg are one surface
+          const yb = yw / fr.kL, w = 1 - sstep(cr - 0.01, cr - 0.17, yb);
+          if (w > 0) {
+            const sd = Math.sign(p.x) || 1;
+            const zf = S(D, yb, 0, tOff)[2], zb = S(D, yb, Math.PI, tOff)[2], xs = Math.abs(S(D, yb, sd * Math.PI / 2, tOff)[0]);
+            q.p = p.clone(); q.p.z = lerp(p.z, (zf + zb) / 2, w); q.p.x = lerp(p.x, sd * xs / 2, w);
+            q.rx = lerp(q.r, Math.max(q.r, xs / 2 + 0.002), w);
+            q.r = lerp(q.r, Math.max(q.r, (zf - zb) / 2), w);
+          }
+          path.push(q);
         }
-        add(tubeGeo(path, 40), fabMat(1, T.DoubleSide));
-        // turned hem band
-        add(tubeGeo(path.slice(-3).map(q => ({ p: q.p, r: q.r + 0.0015 })), 40), fabMat(0.93, T.DoubleSide));
+        { const R0 = path.map(q => q.r), X0 = path.map(q => q.rx || q.r); path.forEach((q, i) => { if (q.rx) { let s2 = 0, w2 = 0; for (let k = -4; k <= 4; k++) { const ww = Math.exp(-k * k / 8); s2 += X0[clamp(i + k, 0, X0.length - 1)] * ww; w2 += ww; } q.rx = Math.max(s2 / w2, X0[i] * 0.985); } let s = 0, w = 0; for (let k = -4; k <= 4; k++) { const ww = Math.exp(-k * k / 8); s += R0[clamp(i + k, 0, R0.length - 1)] * ww; w += ww; } q.r = Math.max(s / w, R0[i] * 0.985); }); }
+        add(tubeGeo(path, 44), fabMat(1, T.DoubleSide));
+        ringSlab(path.slice(-4).map(q => ({ p: q.p, r: q.r + 0.0012 })), 0.003, fabMat(0.96));
       });
-      const st = c.pockets || 'jetted';
-      [-1, 1].forEach(s => patch(GT, cr + 0.055, top - 0.04, s * 1.15, 0.005, tOff + 0.003, darkMat()));
-      [-1, 1].forEach(s => pocketSet(GT, top - 0.05, Math.PI + s * 0.45, 0.12, c.garment === 'pants' && st !== 'ticket' ? st : 'jetted', tOff, 0.045));
     }
 
-    // =============== WAISTCOAT ===============
+    // two overlapping fronts: left front (wearer's left, +x) laps over the right
+    const frontPair = (o) => {
+      // o: grid, y0, y1, a(yb) half-opening, ov(yb) overlap angle, off(yb,th), ny, nt, mat(), lining()
+      const lft = { grid: o.grid, ny: o.ny, nt: o.nt, y0: o.y0, y1: o.y1, th0: (yb) => o.a(yb) - o.ov(yb), th1: () => Math.PI, off: (yb, th) => o.off(yb, th) + 0.0026 * sstep(0.35, -0.2, th) };
+      const rgt = { grid: o.grid, ny: o.ny, nt: o.nt, y0: o.y0, y1: o.y1, th0: () => Math.PI, th1: (yb) => TAU - o.a(yb) + o.ov(yb), off: o.off };
+      const gl = panelGeo(lft), gr = panelGeo(rgt);
+      add(gl, o.mat()); add(gr, o.mat());
+      if (o.lining) { add(gl.clone(), o.lining()); add(gr.clone(), o.lining()); }
+      // cut edge of the top (left) front, so the overlap reads as a separate layer
+      const ys = []; for (let k = 0; k <= 60; k++) ys.push(lerp(o.edgeY0, o.edgeY1, k / 60));
+      edgeWall(o.grid, ys, (yb) => o.a(yb) - o.ov(yb), (yb, th) => o.off(yb, th) + 0.0026, 0.004, o.mat());
+      edgeWall(o.grid, ys, (yb) => -(o.a(yb) - o.ov(yb)), (yb, th) => o.off(yb, th), 0.003, o.mat());
+    };
+
+    // =============== WAISTCOAT (full garment) ===============
     if (hasWc) {
-      const e = { slim: 0.008, regular: 0.012, relaxed: 0.018 }[fit] || 0.012;
-      const wOff = (hasShirt ? 0.009 : 0) + e;
-      const btnTop = ch - 0.035, wTop = nk - 0.012, wHem = wy - 0.1;
-      const opened = c.openFront && !hasCoat ? 0.35 : 0;
+      const btnTop = ch - 0.035, wTop = nkC - 0.012, wHem = wy - 0.105;
+      const opened = c.openFront && !hasCoat ? 1 : 0;
       const wA = (yb) => {
         let a;
-        if (yb >= btnTop) a = 0.035 + 0.74 * Math.pow((yb - btnTop) / (wTop - btnTop), 0.85);
-        else if (yb >= wy - 0.04) a = 0.035;
-        else a = 0.035 + 0.3 * (wy - 0.04 - yb) / (wy - 0.04 - wHem);
-        return a + opened * (1 - sstep(btnTop, wTop, yb));
+        if (yb >= btnTop) a = 0.02 + 0.76 * Math.pow((yb - btnTop) / (wTop - btnTop), 0.85);
+        else if (yb >= wy - 0.04) a = 0.02;
+        else a = 0.02 + 0.32 * (wy - 0.04 - yb) / (wy - 0.04 - wHem);
+        return a + opened * 0.35 * (1 - sstep(btnTop, wTop, yb));
       };
-      const y0 = (th) => wHem + 0.035 * sstep(0.3, 1.4, Math.abs(wrapPi(th)));
-      const y1 = (th) => lerp(wTop, ap - 0.03, sstep(0.72, 0.93, Math.abs(Math.sin(th))));
-      const off = (yb) => wOff + 0.004 * sstep(wy, wHem, yb);
-      const outer = shellGeo({ grid: GT, y0, y1, ny: 56, nt: 84, a: wA, off });
-      add(outer, fabMat(1));
-      add(outer.clone(), (c.lining === 'half' ? fabMat(0.8, T.BackSide) : liningMat(T.BackSide)));
+      const ovA = (yb) => opened ? 0 : (0.014 / 0.15) * sstep(btnTop + 0.03, btnTop - 0.01, yb) * sstep(wHem, wy - 0.03, yb);
+      const y0 = (th) => wHem + 0.04 * sstep(0.25, 1.4, Math.abs(wrapPi(th)));
+      const y1 = (th) => lerp(wTop, ap - 0.035, sstep(0.72, 0.93, Math.abs(Math.sin(th))));
+      const off = (yb, th) => lerp(L.wc + 0.003 * sstep(wy, wHem, yb), L.shirt + 0.006, sstep(shY - 0.03, wTop, yb)) + 0.037 * Math.exp(-Math.pow((yb - ap - 0.05) / 0.07, 2)) * Math.pow(Math.abs(Math.sin(th || 0)), 3) + 0.01 * Math.exp(-Math.pow((yb - shY + 0.02) / 0.05, 2)) * sstep(0.6, 1.0, Math.abs(Math.sin(th || 0)));
+      frontPair({ grid: D, y0, y1, a: wA, ov: ovA, off, ny: 60, nt: 46, mat: () => fabMat(1), lining: () => (c.lining === 'half' ? fabMat(0.8, T.BackSide) : liningMat(T.BackSide)), edgeY0: wHem - 0.01, edgeY1: wTop });
       if (!opened) for (let k = 0; k < 5; k++) {
-        const yb = lerp(btnTop - 0.008, wy - 0.045, k / 4);
-        const b = button(0.0078, btnMat()); b.castShadow = true;
-        placeOn(b, GT, yb, wA(yb) + 0.032, off(yb) + 0.003); M.add(b);
+        const yb = lerp(btnTop - 0.01, wy - 0.045, k / 4);
+        putBtn(0.0075, btnMat(), D, yb, wA(yb) + 0.004, off(yb) + 0.0028);
       }
       const st = c.pockets || 'jetted';
-      if (!hasCoat || true) {
-        [-1, 1].forEach(s => pocketSet(GT, wy - 0.035, s * 0.85, 0.095, st === 'ticket' || st === 'patch' ? 'jetted' : st, off(wy - 0.035), 0.032));
-        patch(GT, ch - 0.01, ch + 0.006, 0.8, 0.075, off(ch) + 0.0035, darkMat());
-      }
-      // back cinch strap
-      patch(GT, wy + 0.01, wy + 0.03, Math.PI, 0.12, off(wy) + 0.004, liningMat(T.DoubleSide));
+      [-1, 1].forEach(s => {
+        if (st === 'flap' || st === 'ticket') flap(D, wy - 0.03, s * 0.85, 0.095, 0.034, off(wy) + 0.0028 * (s > 0), fabMat(0.98));
+        else welt(D, wy - 0.03, s * 0.85, 0.095, off(wy) + 0.0026 * (s > 0), fabMat(0.98));
+      });
+      welt(D, ch - 0.005, 0.8, 0.075, off(ch) + 0.0026, fabMat(0.98));
+      // back cinch strap with buckle
+      slabOn(D, wy + 0.01, wy + 0.03, Math.PI, 0.13, off(wy) + 0.0004, 0.002, liningMat(T.DoubleSide), { nu: 6 });
     }
 
-    // =============== COAT ===============
+    // =============== COAT (full garment) ===============
     if (hasCoat) {
-      const G = A.drapeCoat;
-      const eJ = { slim: 0.016, regular: 0.024, relaxed: 0.036 }[fit] || 0.024;
-      const under = hasWc ? 0.016 : (hasShirt ? 0.008 : 0);
-      const hemY = cr - 0.045, btnY = wy + 0.01, topY = nk - 0.018, open = c.openFront ? 1 : 0;
+      const G = DC;
+      const hemY = cr - 0.045, btnY = wy + 0.01, topY = nkC - 0.01, open = c.openFront ? 1 : 0;
       const off = (yb, th) => {
-        let o = eJ + under;
-        if (yb < wy) o += (wy - yb) * 0.05;               // skirt falls away from the seat
-        if (yb > ap && yb < shY + 0.04) o += 0.006 * sstep(ap, shY, yb); // shoulder pad
-        if (fit === 'slim') o -= 0.006 * Math.exp(-Math.pow((yb - wy) / 0.06, 2));
-        return o;
+        let o = L.coat;
+        if (yb < wy) o += (wy - yb) * 0.05;
+        if (yb > ap && yb < shY + 0.04) o += 0.006 * sstep(ap, shY, yb);
+        if (fit === 'slim') o -= 0.005 * Math.exp(-Math.pow((yb - wy) / 0.06, 2));
+        o += 0.04 * Math.exp(-Math.pow((yb - ap - 0.05) / 0.07, 2)) * Math.pow(Math.abs(Math.sin(th || 0)), 3);
+        // the neckline closes in to sit on the shirt collar instead of standing off the body
+        return lerp(o, L.shirt + 0.011, sstep(shY - 0.03, topY + 0.004, yb));
       };
       const jA = (yb) => {
         let a;
-        if (yb >= btnY) a = 0.6 * Math.pow((yb - btnY) / (topY - btnY), 1.05);
+        if (yb >= btnY) a = 0.62 * Math.pow((yb - btnY) / (topY - btnY), 1.05);
         else a = 0.5 * Math.pow((btnY - yb) / (btnY - hemY), 1.6);
         if (open) { const t = clamp((yb - hemY) / (shY - hemY), 0, 1); a += 0.42 * (1 - t * t); }
         return a;
       };
+      const ovA = (yb) => open ? 0 : (0.016 / 0.16) * sstep(btnY + 0.05, btnY + 0.005, yb) * sstep(btnY - 0.13, btnY - 0.06, yb);
       const y0 = (th) => hemY + 0.02 * Math.pow(Math.abs(Math.cos(th)), 4);
-      const outer = shellGeo({ grid: G, y0, y1: topY, ny: 80, nt: 88, a: jA, off, gusset: true });
-      add(outer, fabMat(1));
       const lin = c.lining || 'bemberg';
-      if (lin === 'half') {
-        add(shellGeo({ grid: G, y0: wy - 0.02, y1: topY, ny: 50, nt: 88, a: jA, off }), liningMat(T.BackSide));
-        add(shellGeo({ grid: G, y0, y1: wy - 0.02, ny: 24, nt: 88, a: jA, off }), fabMat(0.8, T.BackSide));
-      } else add(outer.clone(), liningMat(T.BackSide));
+      frontPair({ grid: G, y0, y1: topY, a: jA, ov: ovA, off, ny: 84, nt: 48, mat: () => fabMat(1), lining: () => (lin === 'half' ? fabMat(0.85, T.BackSide) : liningMat(T.BackSide)), edgeY0: hemY, edgeY1: topY });
 
-      // collar band round the back of the neck
-      add(shellGeo({ grid: GT, y0: nk - 0.035, y1: nk + 0.0, ny: 4, nt: 56, a: () => 1.05, off: (yb) => off(nk, 0) + 0.004 }), fabMat(0.96, T.DoubleSide));
-
-      // lapels
+      // lapels: turned-back cloth with a rolled fold edge, lying on the fronts
       const lapel = c.lapel || 'notch';
       const satin = kind === 'blend' && lapel !== 'notch';
-      const lapMat = satin
-        ? new T.MeshPhysicalMaterial({ color: col.clone().multiplyScalar(0.75), roughness: 0.22, clearcoat: 0.3, side: T.DoubleSide })
-        : fabMat(1.06, T.DoubleSide);
-      const W = {
-        notch: [[0, 0.006], [0.25, 0.042], [0.6, 0.074], [0.8, 0.086], [0.83, 0.05], [0.86, 0.028], [0.885, 0.05], [1, 0.044]],
-        peak: [[0, 0.006], [0.25, 0.044], [0.6, 0.08], [0.82, 0.096], [0.88, 0.108], [0.9, 0.038], [1, 0.04]],
-        shawl: [[0, 0.006], [0.3, 0.048], [0.65, 0.072], [0.85, 0.066], [1, 0.05]]
+      const lapMat = () => satin
+        ? new T.MeshPhysicalMaterial({ color: col.clone().multiplyScalar(0.8), roughness: 0.22, clearcoat: 0.35, side: T.DoubleSide })
+        : fabMat(1.03, T.DoubleSide);
+      const Wp = {
+        notch: [[0, 0.004], [0.25, 0.04], [0.6, 0.072], [0.82, 0.084], [0.84, 0.05], [0.87, 0.024], [0.9, 0.05], [1, 0.046]],
+        peak: [[0, 0.004], [0.25, 0.042], [0.6, 0.078], [0.84, 0.096], [0.9, 0.11], [0.92, 0.04], [1, 0.042]],
+        shawl: [[0, 0.004], [0.3, 0.046], [0.65, 0.07], [0.85, 0.064], [1, 0.05]]
       }[lapel];
-      const lift = lapel === 'peak' ? [[0, 0], [0.7, 0], [0.88, 0.035], [0.9, 0], [1, 0]] : [[0, 0], [1, 0]];
-      const lTop = lapel === 'shawl' ? topY - 0.004 : lerp(btnY, topY, 0.86);
-      [1, -1].forEach(s => add(gridGeo(6, 56, (u, v) => {
-        const yb = lerp(btnY, lTop, v), yy = yb + pl(lift, v) * u;
-        const a = jA(yb), R = radAt(G, yb, a, off(yb, a));
-        const th = a + u * pl(W, v) / R;
-        const p = S(G, Math.min(yy, topY), th, off(yb, th) + 0.004 + 0.002 * (1 - u));
-        return [p[0] * s, p[1], p[2]];
-      }), lapMat));
+      const lift = lapel === 'peak' ? [[0, 0], [0.72, 0], [0.9, 0.034], [0.92, 0], [1, 0]] : [[0, 0], [1, 0]];
+      const lBot = btnY + 0.006, lTop = lapel === 'shawl' ? topY : lerp(btnY, topY, 0.9);
+      const lapelPiece = (s) => add(slabGeo(7, 60, (u, v) => {
+        const yb = lerp(lBot, lTop, v), yy = Math.min(yb + pl(lift, v) * u, topY + 0.01);
+        const a = jA(yb) - ovA(yb) * (s > 0 ? 1 : 0), base = off(yb, a) + (s > 0 ? 0.0026 : 0);
+        const R = radAt(G, yb, a, base);
+        const th = a + u * pl(Wp, v) / R;
+        const rollLift = 0.0045 * Math.pow(1 - u, 1.6) * sstep(0, 0.35, v);   // lapel rolls up off the chest near the fold
+        const p = S(G, yy, th, base + 0.0004 + rollLift);
+        return V3([p[0] * s, p[1], p[2]]);
+      }, (u, v) => 0.0032, { roundU0: true }), lapMat());
+      lapelPiece(1); lapelPiece(-1);
+      // upper collar: a folded band round the back of the neck meeting the lapels at the gorge
+      add(slabGeo(56, 5, (u, v) => {
+        const th = lerp(0.6, TAU - 0.6, u), yb = lerp(nkC + 0.012, nkC - 0.022, v);
+        const r = neckR(th) + (hasShirt ? 0.0095 : 0.004) + 0.006 * v;
+        return V3(S(G, yb, th, r - radAt(G, yb, th, 0)));
+      }, 0.0034, { roundU0: false }), fabMat(1.0, T.DoubleSide));
 
-      if (!open) {
-        [btnY, btnY - 0.1].forEach((yb, k) => {
-          const b = button(0.0105, btnMat()); b.castShadow = true;
-          placeOn(b, G, yb, jA(yb) + 0.045 + (k ? 0.01 : 0), off(yb, 0) + 0.004); M.add(b);
-        });
-      }
+      if (!open) [btnY, btnY - 0.1].forEach((yb, k) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, off(yb, 0) + 0.0026));
       const st = c.pockets || 'flap';
       const pY = cr + 0.1;
-      [-1, 1].forEach(s => pocketSet(G, pY, s * 1.1, 0.15, st === 'ticket' ? 'flap' : st, off(pY, 1.1)));
-      if (st === 'ticket') pocketSet(G, pY + 0.06, -1.03, 0.1, 'flap', off(pY + 0.06, 1), 0.038);
+      [-1, 1].forEach(s => {
+        const o = off(pY, 1.1);
+        if (st === 'patch') patchPocket(G, pY + 0.02, s * 1.1, 0.16, 0.17, o, fabMat(0.98));
+        else if (st === 'jetted') welt(G, pY, s * 1.1, 0.15, o, fabMat(0.98), 0.005);
+        else flap(G, pY, s * 1.1, 0.155, 0.055, o, fabMat(0.98));
+      });
+      if (st === 'ticket') flap(G, pY + 0.06, -1.03, 0.1, 0.04, off(pY + 0.06, 1), fabMat(0.98));
       const bY = ch + 0.02;
-      if (st === 'patch') pocketSet(G, bY + 0.015, 0.78, 0.095, 'patch', off(bY, 0.8));
-      else patch(G, bY, bY + 0.022, 0.78, 0.095, off(bY, 0.8) + 0.0035, fabMat(0.92, T.DoubleSide));
-      // pocket square
-      add(gridGeo(8, 1, (u, v) => {
-        const yb = bY + 0.021 + v * (0.006 + 0.014 * (1 - Math.abs(u - 0.62) * 1.6));
+      if (st === 'patch') patchPocket(G, bY + 0.02, 0.78, 0.1, 0.11, off(bY, 0.78) + 0.0026, fabMat(0.98));
+      else slabOn(G, bY - 0.002, bY + 0.022, 0.78, 0.098, off(bY, 0.78) + 0.0026, 0.003, fabMat(0.98), { slant: 0.004 });
+      // pocket square: two folded points
+      add(slabGeo(8, 2, (u, v) => {
+        const yb = bY + 0.02 + v * (0.006 + 0.016 * Math.max(0, 1 - Math.abs(u - 0.35) * 3.2, 1 - Math.abs(u - 0.72) * 3.2));
         const R = radAt(G, yb, 0.78, off(yb, 0.78));
-        return S(G, yb, 0.78 + (u - 0.5) * 0.07 / R, off(yb, 0.78) + 0.0045);
-      }), new T.MeshStandardMaterial({ color: 0xf3f0e8, roughness: 0.7, side: T.DoubleSide }));
+        return V3(S(G, yb, 0.78 + (u - 0.5) * 0.072 / R, off(yb, 0.78) + 0.0026));
+      }, 0.0028), new T.MeshStandardMaterial({ color: 0xf3f0e8, roughness: 0.7, side: T.DoubleSide }));
       if (lapel !== 'shawl') {
-        const yb = lerp(btnY, lTop, 0.72), hole = new T.Mesh(new T.BoxGeometry(0.016, 0.002, 0.0045), new T.MeshStandardMaterial({ color: 0x9a2a2a, roughness: 0.6 }));
-        const a = jA(yb), R = radAt(G, yb, a, off(yb, a));
-        placeOn(hole, G, yb, a + 0.045 / R, off(yb, a) + 0.0085); M.add(hole);
+        const yb = lerp(lBot, lTop, 0.74), a = jA(yb), R = radAt(G, yb, a, off(yb, a));
+        const hole = new T.Mesh(new T.BoxGeometry(0.017, 0.0022, 0.004), new T.MeshStandardMaterial({ color: 0x9a2a2a, roughness: 0.6 }));
+        placeOn(hole, G, yb, a + 0.05 / R, off(yb, a) + 0.0026 + 0.0075); M.add(hole);
       }
-      // sleeves
+      // sleeves: always outside the shirt sleeve
       fr.arms.forEach((chn, si) => {
         const wt = wristT(chn);
-        const sE = { slim: 0.012, regular: 0.018, relaxed: 0.026 }[fit] || 0.018;
-        const rTop = (0.064 * fr.kA + sE), rCuff = 0.048 * fr.kA + 0.004;
-        const path = chainPath(chn, 0.035, wt - 0.012, 34, (t, r) => Math.min(rTop + 0.006, Math.max(r + sE * 0.8, lerp(rTop, rCuff, Math.pow(t, 0.9)))));
-        add(tubeGeo(path, 40), fabMat(1, T.DoubleSide));
+        const inner = hasShirt ? shirtSleeve(chn).path : null;
+        const sE = { slim: 0.012, regular: 0.017, relaxed: 0.025 }[fit] || 0.017;
+        const rTop = 0.064 * fr.kA + sE, rCuff = 0.05 * fr.kA + 0.005;
+        const path = chainPath(chn, 0.0, wt - 0.014, 36, (t, r) => Math.min(rTop + 0.006, Math.max(r + sE * 0.8, lerp(rTop, rCuff, Math.pow(t, 0.9)))));
+        if (inner) path.forEach(q => {
+          let best = inner[0]; inner.forEach(z => { if (z.p.distanceToSquared(q.p) < best.p.distanceToSquared(q.p)) best = z; });
+          q.r = Math.max(q.r, best.r + 0.007);
+        });
+        ringSlab(path.slice(-3).map(q => ({ p: q.p, r: q.r + 0.0008 })), 0.0028, fabMat(1));
+        add(tubeGeo(path, 44), fabMat(1, T.DoubleSide));
         sleeveCap(path, fabMat(1));
-        // cuff buttons
-        const endP = path[path.length - 1].p, endD = new T.Vector3().subVectors(endP, path[path.length - 3].p).normalize();
+        const endP = path[path.length - 1].p, endD = endP.clone().sub(path[path.length - 3].p).normalize();
         const o = new T.Vector3(si ? -0.75 : 0.75, 0, -0.66).normalize();
         for (let k = 0; k < 4; k++) {
-          const d = 0.028 + k * 0.018;
-          const b = button(0.0064, btnMat());
-          b.position.copy(endP).addScaledVector(endD, -d).addScaledVector(o, rCuff + 0.002);
-          b.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), o);
-          b.castShadow = true; M.add(b);
+          const d = 0.03 + k * 0.017, q = path[path.length - 1];
+          const b = btn3d(0.0062, btnMat());
+          b.position.copy(endP).addScaledVector(endD, -d).addScaledVector(o, q.r + 0.0015);
+          b.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), o); M.add(b);
         }
       });
     }
