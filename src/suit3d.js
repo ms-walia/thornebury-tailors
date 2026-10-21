@@ -26,7 +26,7 @@ function loadData(base) {
       fetch(base + 'anatomy.json').then(r => { if (!r.ok) throw new Error('anatomy'); return r.json(); }),
       new GLTFLoader().loadAsync(base + 'mannequin.glb'),
       new GLTFLoader().loadAsync(base + 'g_shirt.glb').catch(() => null),
-      null
+      new GLTFLoader().loadAsync(base + 'g_pants.glb').catch(() => null)
     ]).catch(e => { dataP = null; throw e; });
   }
   return dataP;
@@ -74,7 +74,7 @@ class SuitViewer extends HTMLElement {
     this._msg.textContent = 'Preparing fitting room…';
     this.appendChild(this._msg);
     const base = this.getAttribute('assets') || '/assets/';
-    loadData(base).then(([A, gltf, gs, gw]) => { if (this.isConnected) this._init(A, gltf, { shirt: gs, waistcoat: gw }); })
+    loadData(base).then(([A, gltf, gs, gp]) => { if (this.isConnected) this._init(A, gltf, { shirt: gs, pants: gp }); })
       .catch(() => { this._msg.textContent = '3D preview unavailable'; });
   }
   disconnectedCallback() {
@@ -190,8 +190,9 @@ class SuitViewer extends HTMLElement {
       const close = this._cfg && this._cfg.closeUp;
       const ty = close ? f.chestY + 0.02 : f.H * 0.52;
       const td = close ? 1.45 : f.H * 2.35 + 0.2;
-      this._camY += (ty - this._camY) * Math.min(1, dt * 4);
-      this._camD += (td - this._camD) * Math.min(1, dt * 4);
+      const cam = this._cfg && this._cfg.cam; const tyy = cam ? cam[0] : ty, tdd = cam ? cam[1] : td;
+      this._camY += (tyy - this._camY) * Math.min(1, dt * 4);
+      this._camD += (tdd - this._camD) * Math.min(1, dt * 4);
       this.camera.position.set(0, this._camY + this._camD * 0.05, this._camD);
       this.camera.lookAt(0, this._camY, 0);
       this.renderer.render(this.scene, this.camera);
@@ -338,8 +339,9 @@ class SuitViewer extends HTMLElement {
   }
   _deformPositions(fr, src, reg) {
     const A = this.A, n = src.length / 3, out = new Float32Array(src.length);
-    const nearest = (chains, x, y, z) => {
+    const nearest = (chains, x, y, z, rx) => {
       const ch = x >= 0 ? chains[0] : chains[1];
+      if (rx !== undefined) x = rx;
       let best = 0, bd = 1e9;
       for (let k = 0; k < ch.length; k++) {
         const b = ch[k].b, d = (b[0] - x) ** 2 + (b[1] - y) ** 2 + (b[2] - z) ** 2;
@@ -349,7 +351,9 @@ class SuitViewer extends HTMLElement {
     };
     for (let i = 0; i < n; i++) {
       const x = src[i * 3], y = src[i * 3 + 1], z = src[i * 3 + 2];
-      const wa = reg.getX(i) / (reg.normalized ? 1 : 255), wl = reg.getY(i) / (reg.normalized ? 1 : 255);
+      const wa = reg.getX(i) / (reg.normalized ? 1 : 255);
+      // near the crotch, hips and legs hand over gradually so neighbouring cloth moves together
+      const wl = (reg.getY(i) / (reg.normalized ? 1 : 255)) * sstep(A.crotchY - 0.03, A.crotchY - 0.17, y);
       const wt = Math.max(0, 1 - wa - wl);
       let ox = 0, oy = 0, oz = 0;
       if (wt > 0) {
@@ -362,7 +366,9 @@ class SuitViewer extends HTMLElement {
         ox += wa * (c.p.x + (x - b[0]) * k); oy += wa * (c.p.y + (y - b[1]) * k); oz += wa * (c.p.z + (z - b[2]) * k);
       }
       if (wl > 0) {
-        const c = nearest(fr.legs, x, y, z), b = c.b, k = fr.kLg;
+        // side flag (channels z/w) keeps centre-line cloth with its own leg
+        const hasSide = reg.itemSize > 3 && reg.getW(i) > 0.5;
+        const c = hasSide ? nearest(fr.legs, reg.getZ(i) >= 0.5 ? 1 : -1, y, z, x) : nearest(fr.legs, x, y, z), b = c.b, k = fr.kLg;
         ox += wl * (c.p.x + (x - b[0]) * k); oy += wl * (c.p.y + (y - b[1]) * fr.kL); oz += wl * (c.p.z + (z - b[2]) * k);
       }
       out[i * 3] = ox; out[i * 3 + 1] = oy; out[i * 3 + 2] = oz;
@@ -538,14 +544,14 @@ class SuitViewer extends HTMLElement {
     const radAt = (g, yb, th, off) => gSample(g, fr.Y(yb), th) + off;
     // push torso vertices of a mesh outside a grid
     // push torso vertices outside a grid with a smooth per-bin field, so double-layered cloth keeps its thickness
-    const clearOf = (pos, reg, g, gap) => {
+    const clearOf = (pos, reg, g, gap, minY) => {
       const need = new Float32Array(gny * NA), rows = [], bins = [], rs = [];
       const wts = [];
       for (let i = 0, k = 0; i < pos.length; i += 3, k++) {
         rows.push(-1); bins.push(0); rs.push(0);
         const wa = reg ? reg.getX(k) : 0, wl = reg ? reg.getY(k) : 0;
         wts.push(clamp(1.8 * (1 - Math.max(wa, wl)), 0, 1));
-        const y = pos[i + 1]; if (y < gy0 || y > gy0 + gdy * (gny - 1)) continue;
+        const y = pos[i + 1]; if (y < gy0 || y > gy0 + gdy * (gny - 1) || (minY !== undefined && y < minY)) continue;
         const cz = czW(y), x = pos[i], z = pos[i + 2] - cz, r = Math.hypot(x, z), th = Math.atan2(x, z);
         const row = rowOf(y); let j = Math.round(th / TAU * NA); j = ((j % NA) + NA) % NA;
         rows[k] = row; bins[k] = j; rs[k] = r;
@@ -568,6 +574,7 @@ class SuitViewer extends HTMLElement {
     const bodyPos = body.geometry.getAttribute('position').array, bReg = this._region;
     const isTorso = (reg) => (k) => (reg.getX(k) / (reg.normalized ? 1 : 255)) < 0.5;
     const gBody = gridFrom(bodyPos, isTorso(bReg));
+    const gBodyT = gridFrom(bodyPos, (k) => isTorso(bReg)(k) && (bReg.getY(k) / (bReg.normalized ? 1 : 255)) < 0.5);
 
     // ---------- geometry helpers ----------
     const shellGeo = (o) => {
@@ -802,8 +809,48 @@ class SuitViewer extends HTMLElement {
       });
     }
 
+    // =============== TROUSERS: fitted real-pattern trousers, in our cloth ===============
+    let gPants = null;
+    const pantsModel = hasPants && !!MS.pants;
+    if (pantsModel) {
+      const m = MS.pants;
+      const pp = this._deformPositions(fr, m.base, m.region);
+      clearOf(pp, m.region, gShirt ? gMax(gBodyT, gShirt) : gBodyT, 0.004, fr.Y(A.crotchY + 0.06));
+      // pressed crease down the front of each leg
+      for (let i = 0, k = 0; i < pp.length; i += 3, k++) {
+        const wl = m.region.getY(k); if (wl < 0.5) continue;
+        const y = pp[i + 1]; if (y > fr.Y(A.crotchY - 0.04)) continue;
+        const chn = fr.legs[m.region.getZ(k) >= 0.5 ? 0 : 1];
+        let best = 0, bd = 1e9;
+        for (let q = 0; q < chn.length; q++) { const d = Math.abs(chn[q].p.y - y); if (d < bd) { bd = d; best = q; } }
+        const c2 = chn[best].p, dx = pp[i] - c2.x, dz = pp[i + 2] - c2.z, r = Math.hypot(dx, dz);
+        const a = Math.atan2(dx, dz), w = 1 - Math.abs(a) / 0.16;
+        if (w > 0 && r > 1e-4) {
+          const h = 0.0035 * w * w * sstep(0.04, 0.14, y) * sstep(fr.Y(A.crotchY - 0.04), fr.Y(A.crotchY - 0.12), y);
+          pp[i] += dx / r * h; pp[i + 2] += dz / r * h;
+        }
+      }
+      gPants = gridFrom(pp, (k) => isTorso(m.region)(k) && (m.region.getY(k) / (m.region.normalized ? 1 : 255)) < 0.5);
+      const posAttr = new T.BufferAttribute(pp, 3);
+      m.parts.forEach(p => {
+        const geo = new T.BufferGeometry();
+        geo.setAttribute('position', posAttr); geo.setAttribute('uv', m.uv); geo.setIndex(p.index); geo.computeVertexNormals();
+        if (/BTN/i.test(p.part)) add(geo, btnMat());
+        else { const mt = fabMat(1, T.FrontSide); mt.map = this._tex(kind, 10); add(geo, mt); }
+      });
+      // tailored back pockets: jetted welts (or flaps), sitting on the trouser surface
+      const pst = c.pockets || 'jetted';
+      [-1, 1].forEach(sd => {
+        const yb = A.waistY - 0.115, thc = Math.PI + sd * 0.45;
+        welt(gPants, yb, thc, 0.12, 0.0012, fabMat(0.97));
+        if (pst === 'flap' || pst === 'ticket') { flap(gPants, yb + 0.005, thc, 0.128, 0.046, 0.0035, fabMat(0.99)); putBtn(0.0055, btnMat(), gPants, yb - 0.026, thc, 0.0075); }
+        else putBtn(0.0052, btnMat(), gPants, yb - 0.016, thc, 0.003);
+      });
+    }
+
     // ---------- layer surfaces ----------
-    const gUnder = gShirt ? gMax(gBody, gShirt) : gBody;
+    let gUnder = gShirt ? gMax(gBody, gShirt) : gBody;
+    if (gPants) gUnder = gMax(gUnder, gPants);
     const D = gDrape(gUnder);
     const DW = gDrop(D, fr.Y(ch), fr.Y(cr - 0.02), 0.12);
     const DC = gMax(gAng(gDrop(D, fr.Y(ch + 0.02), fr.Y(cr - 0.1), 0.1), 7), DW);
@@ -814,7 +861,7 @@ class SuitViewer extends HTMLElement {
     L.coat = (hasWc ? L.wc + 0.008 : L.pants + 0.008) + 0.006 + fitE;
 
     // =============== TROUSERS: one continuous piece, seat flowing into the legs ===============
-    if (hasPants) {
+    if (hasPants && !pantsModel) {
       const tOff = L.pants;
       const topB = wy - 0.004, topW = fr.Y(topB), crW = fr.Y(cr), hemW = 0.035;
       const hemR = ({ slim: 0.06, regular: 0.068, relaxed: 0.078 }[fit] || 0.068) * fr.kLg / fr.u;
