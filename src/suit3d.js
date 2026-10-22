@@ -804,6 +804,21 @@ class SuitViewer extends HTMLElement {
           shirtPos[i] = x * kk; shirtPos[i + 2] = z * kk + cz;
         }
       }
+      // under the Blender jacket's sleeves: draw the shirt sleeves in to the arm (the cuff below the jacket sleeve stays as is)
+      if (hasCoat && MS.coat && (c.lapel || 'notch') === 'notch' && !c.openFront) {
+        const yCuff = fr.Y(0.975), yTop = fr.Y(ap + 0.02);
+        for (let i = 0, k = 0; i < shirtPos.length; i += 3, k++) {
+          if (m.region.getX(k) < 0.5) continue;
+          const y = shirtPos[i + 1]; if (y < yCuff - 0.02 || y > yTop) continue;
+          const side = shirtPos[i] >= 0 ? 0 : 1, chn = fr.arms[side];
+          let best = 0, bd = 1e9;
+          for (let q = 0; q < chn.length; q++) { const pp = chn[q].p, d = (pp.x - shirtPos[i]) ** 2 + (pp.y - y) ** 2 + (pp.z - shirtPos[i + 2]) ** 2; if (d < bd) { bd = d; best = q; } }
+          const q = chn[best], d = Math.sqrt(bd), tgt = q.r + 0.005;
+          if (d <= tgt) continue;
+          const w = sstep(yCuff - 0.02, yCuff + 0.01, y), nd = lerp(d, tgt, w), kk = nd / d;
+          shirtPos[i] = q.p.x + (shirtPos[i] - q.p.x) * kk; shirtPos[i + 1] = q.p.y + (y - q.p.y) * kk; shirtPos[i + 2] = q.p.z + (shirtPos[i + 2] - q.p.z) * kk;
+        }
+      }
       // the shirt's measured surface includes its shoulders (sleeve heads above the armpit), so straps sit on top
       const apW = fr.Y(ap + 0.01), jx = Math.abs(fr.arms[0][0].p.x);
       gShirt = gridFrom(shirtPos, (k) => isTorso(m.region)(k) || (shirtPos[k * 3 + 1] > apW && Math.abs(shirtPos[k * 3]) < jx - 0.015));
@@ -1114,6 +1129,8 @@ class SuitViewer extends HTMLElement {
       }, 0.0034, {}), fabMat(1.0, T.DoubleSide));
 
       if (!open) [btnY, btnY - 0.1].forEach((yb) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, coatModel ? BTN_SINK : off(yb, 0) + 0.0026));
+      // the Blender jacket carries its own pocket flaps and breast welt
+      if (!coatModel) {
       const st = c.pockets || 'flap';
       const pY = cr + 0.1;
       [-1, 1].forEach(s => {
@@ -1131,6 +1148,7 @@ class SuitViewer extends HTMLElement {
         const R = radAt(G, yb, 0.78, off(yb, 0.78));
         return V3(S(G, yb, 0.78 + (u - 0.5) * 0.072 / R, off(yb, 0.78) + 0.0026));
       }, 0.0028), new T.MeshStandardMaterial({ color: 0xf3f0e8, roughness: 0.7, side: T.DoubleSide }));
+      }
       if (!coatModel && lapel !== 'shawl') {
         const yb = lerp(lBot, lTop, 0.74), a = jA(yb), R = radAt(G, yb, a, off(yb, a));
         const hole = new T.Mesh(new T.BoxGeometry(0.017, 0.0022, 0.004), new T.MeshStandardMaterial({ color: 0x9a2a2a, roughness: 0.6 }));
