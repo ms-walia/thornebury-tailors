@@ -571,17 +571,6 @@ class SuitViewer extends HTMLElement {
         pos[i] = x * kk; pos[i + 2] = z * kk + cz;
       }
     };
-    // pull cloth that stands off the body back in: above yLo it eases towards the surface of grid g, fully snug by yHi.
-    // (clearOf only ever pushes outwards, so a loosely drafted waistband would otherwise float away from the waist)
-    const hug = (pos, reg, g, gap, yLo, yHi) => {
-      for (let i = 0, k = 0; i < pos.length; i += 3, k++) {
-        const y = pos[i + 1]; if (y <= yLo) continue;
-        if (reg && reg.getY(k) / (reg.normalized ? 1 : 255) > 0.5) continue;
-        const cz = czW(y), x = pos[i], z = pos[i + 2] - cz, r = Math.hypot(x, z); if (r < 1e-6) continue;
-        const target = gSample(g, y, Math.atan2(x, z)) + gap;
-        if (r > target) { const kk = lerp(1, target / r, sstep(yLo, yHi, y)); pos[i] = x * kk; pos[i + 2] = z * kk + cz; }
-      }
-    };
     const bodyPos = body.geometry.getAttribute('position').array, bReg = this._region;
     const isTorso = (reg) => (k) => (reg.getX(k) / (reg.normalized ? 1 : 255)) < 0.5;
     const gBody = gridFrom(bodyPos, isTorso(bReg));
@@ -826,9 +815,7 @@ class SuitViewer extends HTMLElement {
     if (pantsModel) {
       const m = MS.pants;
       const pp = this._deformPositions(fr, m.base, m.region);
-      const gUnderPants = gShirt ? gMax(gBodyT, gShirt) : gBodyT;
-      hug(pp, m.region, gUnderPants, 0.004, fr.Y(A.hipY), fr.Y(A.waistY - 0.02));
-      clearOf(pp, m.region, gUnderPants, 0.004, fr.Y(A.crotchY + 0.06));
+      clearOf(pp, m.region, gShirt ? gMax(gBodyT, gShirt) : gBodyT, 0.004, fr.Y(A.crotchY + 0.06));
       // pressed crease down the front of each leg
       for (let i = 0, k = 0; i < pp.length; i += 3, k++) {
         const wl = m.region.getY(k); if (wl < 0.5) continue;
