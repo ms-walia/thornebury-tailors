@@ -1033,7 +1033,7 @@ class SuitViewer extends HTMLElement {
       if (coatModel) {
         const m = MS.coat;
         const cp = this._deformPositions(fr, m.base, m.region);
-        clearOf(cp, m.region, gUnder, L.coat * 0.5);
+        // no polar push-out: the Blender drape is already clear of the body, and the push distorted the shoulders
         G = gridFrom(cp, (k) => isTorso(m.region)(k));
         const posAttr = new T.BufferAttribute(cp, 3);
         m.parts.forEach(p => {
