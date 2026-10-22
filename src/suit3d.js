@@ -1044,7 +1044,7 @@ class SuitViewer extends HTMLElement {
         });
       }
       const hemY = cr - 0.045, btnY = wy + 0.01, topY = nkC - 0.01, open = c.openFront ? 1 : 0;
-      const off = (yb, th) => {
+      const off0 = (yb, th) => {
         let o = L.coat;
         if (yb < wy) o += (wy - yb) * 0.04;
         if (yb > ap && yb < shY + 0.04) o += 0.006 * sstep(ap, shY, yb);
@@ -1052,6 +1052,9 @@ class SuitViewer extends HTMLElement {
         o += 0.014 * Math.exp(-Math.pow((yb - ap - 0.03) / 0.06, 2)) * Math.pow(Math.abs(Math.sin(th || 0)), 6);
         return lerp(o, 0.009, sstep(shY - 0.03, topY + 0.004, yb));
       };
+      // on the Blender coat G already is the cloth surface, so trims sit right on it
+      const off = coatModel ? (() => 0.0008) : off0;
+      const BTN_SINK = -0.010; // the cloth grid sits a little proud of the front edge here
       const jA = (yb) => {
         let a;
         if (yb >= btnY) a = 0.62 * Math.pow((yb - btnY) / (topY - btnY), 1.05);
@@ -1093,7 +1096,7 @@ class SuitViewer extends HTMLElement {
         return V3([Math.sin(th) * r, yw, Math.cos(th) * r + cz]);
       }, 0.0034, {}), fabMat(1.0, T.DoubleSide));
 
-      if (!open) [btnY, btnY - 0.1].forEach((yb) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, off(yb, 0) + 0.0026));
+      if (!open) [btnY, btnY - 0.1].forEach((yb) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, coatModel ? BTN_SINK : off(yb, 0) + 0.0026));
       const st = c.pockets || 'flap';
       const pY = cr + 0.1;
       [-1, 1].forEach(s => {
