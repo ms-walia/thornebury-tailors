@@ -26,7 +26,8 @@ function loadData(base) {
       fetch(base + 'anatomy.json').then(r => { if (!r.ok) throw new Error('anatomy'); return r.json(); }),
       new GLTFLoader().loadAsync(base + 'mannequin.glb'),
       new GLTFLoader().loadAsync(base + 'g_shirt.glb').catch(() => null),
-      new GLTFLoader().loadAsync(base + 'g_pants.glb').catch(() => null)
+      new GLTFLoader().loadAsync(base + 'g_pants.glb').catch(() => null),
+      new GLTFLoader().loadAsync(base + 'g_coat.glb').catch(() => null)
     ]).catch(e => { dataP = null; throw e; });
   }
   return dataP;
@@ -74,7 +75,7 @@ class SuitViewer extends HTMLElement {
     this._msg.textContent = 'Preparing fitting room…';
     this.appendChild(this._msg);
     const base = this.getAttribute('assets') || '/assets/';
-    loadData(base).then(([A, gltf, gs, gp]) => { if (this.isConnected) this._init(A, gltf, { shirt: gs, pants: gp }); })
+    loadData(base).then(([A, gltf, gs, gp, gc]) => { if (this.isConnected) this._init(A, gltf, { shirt: gs, pants: gp, coat: gc }); })
       .catch(() => { this._msg.textContent = '3D preview unavailable'; });
   }
   disconnectedCallback() {
@@ -1026,7 +1027,22 @@ class SuitViewer extends HTMLElement {
 
     // =============== COAT ===============
     if (hasCoat) {
-      const G = DC;
+      let G = DC;
+      // Blender-draped coat: one continuous lapel+collar band, real sleeves (notch lapel, closed front)
+      const coatModel = !!MS.coat && (c.lapel || 'notch') === 'notch' && !c.openFront;
+      if (coatModel) {
+        const m = MS.coat;
+        const cp = this._deformPositions(fr, m.base, m.region);
+        clearOf(cp, m.region, gUnder, L.coat * 0.5);
+        G = gridFrom(cp, (k) => isTorso(m.region)(k));
+        const posAttr = new T.BufferAttribute(cp, 3);
+        m.parts.forEach(p => {
+          const geo = new T.BufferGeometry();
+          geo.setAttribute('position', posAttr); geo.setAttribute('uv', m.uv); geo.setIndex(p.index); geo.computeVertexNormals();
+          const lap = /Lapel/i.test(p.part);
+          add(geo, lap ? fabMat(1.03, T.DoubleSide) : fabMat(1, T.DoubleSide));
+        });
+      }
       const hemY = cr - 0.045, btnY = wy + 0.01, topY = nkC - 0.01, open = c.openFront ? 1 : 0;
       const off = (yb, th) => {
         let o = L.coat;
@@ -1046,7 +1062,7 @@ class SuitViewer extends HTMLElement {
       const ovA = (yb) => open ? 0 : (0.016 / Math.max(0.08, radAt(G, yb, 0, L.coat))) * sstep(btnY + 0.05, btnY + 0.005, yb) * sstep(btnY - 0.13, btnY - 0.06, yb);
       const y0 = (th) => hemY + 0.02 * Math.pow(Math.abs(Math.cos(th)), 4);
       const lin = c.lining || 'bemberg';
-      frontPair({ grid: G, y0, y1: topY, eL: (yb) => jA(yb) - ovA(yb), eR: (yb) => jA(yb) - ovA(yb), off, ny: 84, nt: 48, mat: () => fabMat(1),
+      if (!coatModel) frontPair({ grid: G, y0, y1: topY, eL: (yb) => jA(yb) - ovA(yb), eR: (yb) => jA(yb) - ovA(yb), off, ny: 84, nt: 48, mat: () => fabMat(1),
         lining: () => (lin === 'half' ? fabMat(0.85, T.BackSide) : liningMat(T.BackSide)), edgeY0: hemY, edgeY1: topY });
 
       const lapel = c.lapel || 'notch';
@@ -1069,8 +1085,8 @@ class SuitViewer extends HTMLElement {
         const p = S(G, yy, th, base + 0.0004 + rollLift);
         return V3([p[0] * s, p[1], p[2]]);
       }, () => 0.0032, { roundU0: true }), lapMat());
-      lapelPiece(1); lapelPiece(-1);
-      add(slabGeo(56, 5, (u, v) => {
+      if (!coatModel) { lapelPiece(1); lapelPiece(-1); }
+      if (!coatModel) add(slabGeo(56, 5, (u, v) => {
         const th = lerp(0.6, TAU - 0.6, u), yb = lerp(nkC + 0.012, nkC - 0.022, v);
         const r = Math.max(neckR(th) + 0.0095 + 0.006 * v, gSample(gUnder, fr.Y(Math.min(yb, nkC + 0.01)), th) + 0.005 + 0.006 * v);
         const yw = fr.Y(yb), cz = czW(yw);
@@ -1095,12 +1111,12 @@ class SuitViewer extends HTMLElement {
         const R = radAt(G, yb, 0.78, off(yb, 0.78));
         return V3(S(G, yb, 0.78 + (u - 0.5) * 0.072 / R, off(yb, 0.78) + 0.0026));
       }, 0.0028), new T.MeshStandardMaterial({ color: 0xf3f0e8, roughness: 0.7, side: T.DoubleSide }));
-      if (lapel !== 'shawl') {
+      if (!coatModel && lapel !== 'shawl') {
         const yb = lerp(lBot, lTop, 0.74), a = jA(yb), R = radAt(G, yb, a, off(yb, a));
         const hole = new T.Mesh(new T.BoxGeometry(0.017, 0.0022, 0.004), new T.MeshStandardMaterial({ color: 0x9a2a2a, roughness: 0.6 }));
         placeOn(hole, G, yb, a + 0.05 / R, off(yb, a) + 0.0026 + 0.0075); M.add(hole);
       }
-      fr.arms.forEach((chn0, si) => {
+      if (!coatModel) fr.arms.forEach((chn0, si) => {
         const chn = shirtArmR ? chn0.map((q, k) => Object.assign({}, q, { r: Math.max(q.r, shirtArmR[si][k] - 0.006) })) : chn0;
         const wt = wristT(chn0);
         const sE = { slim: 0.012, regular: 0.017, relaxed: 0.025 }[fit] || 0.017;
