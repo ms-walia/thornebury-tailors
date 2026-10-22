@@ -787,6 +787,23 @@ class SuitViewer extends HTMLElement {
           if (r > Rb) { const kk = lerp(1, Rb / r, w); shirtPos[i] = x * kk; shirtPos[i + 2] = z * kk + cz; }
         }
       }
+      // under the Blender coat: flatten the hidden back and shoulders of the shirt so its wrinkles never poke through
+      if (hasCoat && MS.coat && (c.lapel || 'notch') === 'notch' && !c.openFront) {
+        const yLo = fr.Y(wy - 0.06), yHi = fr.Y(nkC + 0.035);
+        const apY = fr.Y(ap + 0.02);
+        for (let i = 0, k = 0; i < shirtPos.length; i += 3, k++) {
+          const y = shirtPos[i + 1]; if (y < yLo || y > yHi) continue;
+          if (m.region.getX(k) > 0.5 && y < apY) continue;      // sleeve heads above the armpit are flattened too
+          const cz = czW(y), x = shirtPos[i], z = shirtPos[i + 2] - cz, r = Math.hypot(x, z), th = Math.atan2(x, z);
+          const Rb = gSample(gBody, y, th) + 0.003;
+          // leave the collar band (it hugs the neck and stays visible above the coat collar)
+          const wc = sstep(fr.Y(nkC + 0.02), fr.Y(nkC + 0.006), y);
+          const w = sstep(0.7, 1.0, Math.abs(th)) * sstep(yLo, yLo + 0.04, y) * wc;
+          if (w <= 0 || r < 1e-4) continue;
+          const nr = Math.max(Math.min(r, Rb - 0.014), r - 0.03 * w), kk = nr / r;   // hidden under the coat, so it may sink into the body
+          shirtPos[i] = x * kk; shirtPos[i + 2] = z * kk + cz;
+        }
+      }
       // the shirt's measured surface includes its shoulders (sleeve heads above the armpit), so straps sit on top
       const apW = fr.Y(ap + 0.01), jx = Math.abs(fr.arms[0][0].p.x);
       gShirt = gridFrom(shirtPos, (k) => isTorso(m.region)(k) || (shirtPos[k * 3 + 1] > apW && Math.abs(shirtPos[k * 3]) < jx - 0.015));
