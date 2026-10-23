@@ -1074,16 +1074,23 @@ class SuitViewer extends HTMLElement {
         m.parts.forEach(p => {
           const geo = new T.BufferGeometry();
           geo.setAttribute('position', posAttr); geo.setAttribute('uv', m.uv); geo.setIndex(p.index); geo.computeVertexNormals();
-          const lap = /Lapel/i.test(p.part);
-          coatGeos.push(geo);
-          const cm = add(geo, lap ? fabMat(1.03, T.DoubleSide) : fabMat(1, T.DoubleSide));
+          const part = p.part || '';
+          // each part of the jacket is its own piece: body, sleeves, lapel+collar, pockets, lining, buttons
+          if (/Pocket/i.test(part) && (c.pockets || 'flap') !== 'flap') return;   // other pocket styles are drawn on top below
+          if (/Lining/i.test(part)) return;   // the lining layer sits inside the shirt on this mannequin; the shell is double-sided
+          if (!/Lining|Button/i.test(part)) coatGeos.push(geo);
+          const mt = /Button/i.test(part) ? btnMat() : /Lining/i.test(part) ? liningMat(T.DoubleSide)
+            : /Lapel/i.test(part) ? fabMat(1.03, T.DoubleSide) : fabMat(1, T.DoubleSide);
+          const cm = add(geo, mt);
           // the jacket's layered panels (lapel over front, facing, lining) sit millimetres apart and would shadow each other
           cm.receiveShadow = false;
         });
         // tuck the shirt under the jacket: any shirt point on the outside of the nearest jacket surface
         // (shoulders, collar, sides, back) is pulled just beneath it, so no shirt shows through the coat
         if (shirtPos && shirtGeos.length && coatGeos.length) {
-          const nrm = coatGeos[0].getAttribute('normal').array, C = 0.012, hash = new Map();
+          const nrm = new Float32Array(cp.length);
+          coatGeos.forEach(g => { const a = g.getAttribute('normal').array, ix = g.getIndex().array; for (let t = 0; t < ix.length; t++) { const v = ix[t] * 3; nrm[v] = a[v]; nrm[v + 1] = a[v + 1]; nrm[v + 2] = a[v + 2]; } });
+          const C = 0.012, hash = new Map();
           const key = (x, y, z) => (Math.floor(x / C) + 512) * 1048576 + (Math.floor(y / C) + 512) * 1024 + (Math.floor(z / C) + 512);
           const yLo = fr.Y(ap - 0.08);
           for (let i = 0, k = 0; i < cp.length; i += 3, k++) {
@@ -1187,7 +1194,7 @@ class SuitViewer extends HTMLElement {
 
       if (!open) (coatModel ? [btnY] : [btnY, btnY - 0.1]).forEach((yb) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, coatModel ? BTN_SINK : off(yb, 0) + 0.0026));
       // the Blender jacket carries its own pocket flaps and breast welt
-      if (!coatModel) {
+      if (!coatModel || (c.pockets || 'flap') !== 'flap') {
       const st = c.pockets || 'flap';
       const pY = cr + 0.1;
       [-1, 1].forEach(s => {
