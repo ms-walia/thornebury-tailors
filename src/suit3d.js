@@ -771,9 +771,11 @@ class SuitViewer extends HTMLElement {
     const MS = this.models || {};
 
     // =============== SHIRT: the fitted real-pattern shirt, recoloured ===============
-    let gShirt = null, shirtPos = null, shirtArmR = null;
+    let gShirt = null, shirtPos = null, shirtArmR = null, shirtRegion = null;
+    const shirtGeos = [];
     if (hasShirt && MS.shirt) {
       const m = MS.shirt;
+      shirtRegion = m.region;
       shirtPos = this._deformPositions(fr, m.base, m.region);
       clearOf(shirtPos, m.region, gBody, 0.003);
       if (hasPants) {
@@ -838,6 +840,7 @@ class SuitViewer extends HTMLElement {
       m.parts.forEach(p => {
         const geo = new T.BufferGeometry();
         geo.setAttribute('position', posAttr); geo.setAttribute('uv', m.uv); geo.setIndex(p.index); geo.computeVertexNormals();
+        shirtGeos.push(geo);
         add(geo, /Button/i.test(p.part) ? shirtBtnMat() : sMat());
       });
     }
@@ -1067,15 +1070,67 @@ class SuitViewer extends HTMLElement {
         const cp = this._deformPositions(fr, m.base, m.region);
         // no polar push-out: the Blender drape is already clear of the body, and the push distorted the shoulders
         G = gridFrom(cp, (k) => isTorso(m.region)(k));
-        const posAttr = new T.BufferAttribute(cp, 3);
+        const posAttr = new T.BufferAttribute(cp, 3), coatGeos = [];
         m.parts.forEach(p => {
           const geo = new T.BufferGeometry();
           geo.setAttribute('position', posAttr); geo.setAttribute('uv', m.uv); geo.setIndex(p.index); geo.computeVertexNormals();
           const lap = /Lapel/i.test(p.part);
+          coatGeos.push(geo);
           const cm = add(geo, lap ? fabMat(1.03, T.DoubleSide) : fabMat(1, T.DoubleSide));
           // the jacket's layered panels (lapel over front, facing, lining) sit millimetres apart and would shadow each other
           cm.receiveShadow = false;
         });
+        // tuck the shirt under the jacket: any shirt point on the outside of the nearest jacket surface
+        // (shoulders, collar, sides, back) is pulled just beneath it, so no shirt shows through the coat
+        if (shirtPos && shirtGeos.length && coatGeos.length) {
+          const nrm = coatGeos[0].getAttribute('normal').array, C = 0.012, hash = new Map();
+          const key = (x, y, z) => (Math.floor(x / C) + 512) * 1048576 + (Math.floor(y / C) + 512) * 1024 + (Math.floor(z / C) + 512);
+          const yLo = fr.Y(ap - 0.08);
+          for (let i = 0, k = 0; i < cp.length; i += 3, k++) {
+            if (cp[i + 1] < yLo - 0.03) continue;
+            const kk = key(cp[i], cp[i + 1], cp[i + 2]); let b = hash.get(kk); if (!b) hash.set(kk, b = []); b.push(k);
+          }
+          let moved = 0;
+          for (let pass = 0; pass < 2; pass++) {
+          const pushV = new Float32Array(shirtPos.length), pushM = new Float32Array(shirtPos.length / 3);
+          for (let i = 0, k = 0; i < shirtPos.length; i += 3, k++) {
+            const x = shirtPos[i], y = shirtPos[i + 1], z = shirtPos[i + 2]; if (y < yLo) continue;
+            const isArm = shirtRegion.getX(k) / (shirtRegion.normalized ? 1 : 255) > 0.5;
+            if (isArm && y < fr.Y(ap + 0.02)) continue;            // the sleeves are handled separately
+            { const ccz0 = czW(y); if (Math.abs(Math.atan2(x, z - ccz0)) < 0.45 && y < fr.Y(nkC - 0.03)) continue; }   // the open front V
+            let best = -1, bd = 1e9;
+            const cx = Math.floor(x / C), cy = Math.floor(y / C), cz = Math.floor(z / C);
+            for (let a = -1; a <= 1; a++) for (let b2 = -1; b2 <= 1; b2++) for (let c2 = -1; c2 <= 1; c2++) {
+              const bucket = hash.get((cx + a + 512) * 1048576 + (cy + b2 + 512) * 1024 + (cz + c2 + 512)); if (!bucket) continue;
+              for (const q of bucket) { const d = (cp[q * 3] - x) ** 2 + (cp[q * 3 + 1] - y) ** 2 + (cp[q * 3 + 2] - z) ** 2; if (d < bd) { bd = d; best = q; } }
+            }
+            if (best < 0 || bd > 0.015 * 0.015) continue;
+            let nx = nrm[best * 3], ny = nrm[best * 3 + 1], nz = nrm[best * 3 + 2];
+            // face the normal away from the body centre line, whichever way the panel was modelled
+            const ccz = czW(y); if (nx * cp[best * 3] + nz * (cp[best * 3 + 2] - ccz) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+            const sd = (x - cp[best * 3]) * nx + (y - cp[best * 3 + 1]) * ny + (z - cp[best * 3 + 2]) * nz;
+            if (sd > -0.005 && sd < 0.018) { const push = sd + 0.005; pushV[i] = -nx; pushV[i + 1] = -ny; pushV[i + 2] = -nz; pushM[k] = push; }
+          }
+          // spread each tuck to nearby shirt points so the cloth moves as a patch (no stray specks)
+          const SC = 0.01, sh = new Map(), sk = (x, y, z) => (Math.floor(x / SC) + 512) * 1048576 + (Math.floor(y / SC) + 512) * 1024 + (Math.floor(z / SC) + 512);
+          for (let k = 0; k < pushM.length; k++) if (pushM[k] > 0) { const q = sk(shirtPos[k * 3], shirtPos[k * 3 + 1], shirtPos[k * 3 + 2]); let b = sh.get(q); if (!b) sh.set(q, b = []); b.push(k); }
+          for (let i = 0, k = 0; i < shirtPos.length; i += 3, k++) {
+            const x = shirtPos[i], y = shirtPos[i + 1], z = shirtPos[i + 2]; if (y < yLo) continue;
+            { const ccz0 = czW(y); if (Math.abs(Math.atan2(x, z - ccz0)) < 0.45 && y < fr.Y(nkC - 0.03)) continue; }
+            let m0 = pushM[k], dx = pushV[i], dy = pushV[i + 1], dz = pushV[i + 2];
+            const cx = Math.floor(x / SC), cy = Math.floor(y / SC), cz = Math.floor(z / SC);
+            for (let a = -1; a <= 1; a++) for (let b2 = -1; b2 <= 1; b2++) for (let c2 = -1; c2 <= 1; c2++) {
+              const bucket = sh.get((cx + a + 512) * 1048576 + (cy + b2 + 512) * 1024 + (cz + c2 + 512)); if (!bucket) continue;
+              for (const q of bucket) {
+                const d = Math.sqrt((shirtPos[q * 3] - x) ** 2 + (shirtPos[q * 3 + 1] - y) ** 2 + (shirtPos[q * 3 + 2] - z) ** 2);
+                const v = pushM[q] * (1 - d / 0.014); if (v > m0) { m0 = v; dx = pushV[q * 3]; dy = pushV[q * 3 + 1]; dz = pushV[q * 3 + 2]; }
+              }
+            }
+            if (m0 > 0) { shirtPos[i] += dx * m0; shirtPos[i + 1] += dy * m0; shirtPos[i + 2] += dz * m0; moved++; }
+          }
+          }
+          if (moved) { shirtGeos[0].getAttribute('position').needsUpdate = true; shirtGeos.forEach(g => g.computeVertexNormals()); }
+        }
       }
       const hemY = cr - 0.045, btnY = wy + 0.01, topY = nkC - 0.01, open = c.openFront ? 1 : 0;
       const off0 = (yb, th) => {
