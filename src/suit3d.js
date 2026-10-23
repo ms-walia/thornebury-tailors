@@ -806,14 +806,14 @@ class SuitViewer extends HTMLElement {
       }
       // under the Blender jacket's sleeves: draw the shirt sleeves in to the arm (the cuff below the jacket sleeve stays as is)
       if (hasCoat && MS.coat && (c.lapel || 'notch') === 'notch' && !c.openFront) {
-        const yCuff = fr.Y(0.975), yTop = fr.Y(ap + 0.02);
+        const yCuff = fr.Y(0.975), yTop = fr.Y(ap + 0.08);
         for (let i = 0, k = 0; i < shirtPos.length; i += 3, k++) {
           if (m.region.getX(k) < 0.5) continue;
           const y = shirtPos[i + 1]; if (y < yCuff - 0.02 || y > yTop) continue;
           const side = shirtPos[i] >= 0 ? 0 : 1, chn = fr.arms[side];
           let best = 0, bd = 1e9;
           for (let q = 0; q < chn.length; q++) { const pp = chn[q].p, d = (pp.x - shirtPos[i]) ** 2 + (pp.y - y) ** 2 + (pp.z - shirtPos[i + 2]) ** 2; if (d < bd) { bd = d; best = q; } }
-          const q = chn[best], d = Math.sqrt(bd), tgt = q.r + 0.005;
+          const q = chn[best], d = Math.sqrt(bd), tgt = q.r * 0.85;   // hidden under the jacket sleeve, so it may sit inside the arm
           if (d <= tgt) continue;
           const w = sstep(yCuff - 0.02, yCuff + 0.01, y), nd = lerp(d, tgt, w), kk = nd / d;
           shirtPos[i] = q.p.x + (shirtPos[i] - q.p.x) * kk; shirtPos[i + 1] = q.p.y + (y - q.p.y) * kk; shirtPos[i + 2] = q.p.z + (shirtPos[i + 2] - q.p.z) * kk;
@@ -1072,7 +1072,9 @@ class SuitViewer extends HTMLElement {
           const geo = new T.BufferGeometry();
           geo.setAttribute('position', posAttr); geo.setAttribute('uv', m.uv); geo.setIndex(p.index); geo.computeVertexNormals();
           const lap = /Lapel/i.test(p.part);
-          add(geo, lap ? fabMat(1.03, T.DoubleSide) : fabMat(1, T.DoubleSide));
+          const cm = add(geo, lap ? fabMat(1.03, T.DoubleSide) : fabMat(1, T.DoubleSide));
+          // the jacket's layered panels (lapel over front, facing, lining) sit millimetres apart and would shadow each other
+          cm.receiveShadow = false;
         });
       }
       const hemY = cr - 0.045, btnY = wy + 0.01, topY = nkC - 0.01, open = c.openFront ? 1 : 0;
@@ -1128,7 +1130,7 @@ class SuitViewer extends HTMLElement {
         return V3([Math.sin(th) * r, yw, Math.cos(th) * r + cz]);
       }, 0.0034, {}), fabMat(1.0, T.DoubleSide));
 
-      if (!open) [btnY, btnY - 0.1].forEach((yb) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, coatModel ? BTN_SINK : off(yb, 0) + 0.0026));
+      if (!open) (coatModel ? [btnY] : [btnY, btnY - 0.1]).forEach((yb) => putBtn(0.0105, btnMat(), G, yb, -ovA(yb) * 0.15, coatModel ? BTN_SINK : off(yb, 0) + 0.0026));
       // the Blender jacket carries its own pocket flaps and breast welt
       if (!coatModel) {
       const st = c.pockets || 'flap';
